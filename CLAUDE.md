@@ -4,74 +4,90 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-This is **panopticon-detection-engine**, internally named **"eyedetect"** — the detection/correlation/alerting engine for the Panopticon&Co EDR platform (a separate polyrepo project; see `../CLAUDE.md` if present for cross-repo context). It's a pure Python CLI/library that ingests process-telemetry events, evaluates them against YAML detection rules, correlates them, and produces alerts. It consumes events from the separate `panopticon-agent` ("Officer") repo via the **Panopticon Schema 0.2** contract; it does not depend on that repo's source and should not gain such a dependency.
+`panopticon-manager` is the network/server side of the Panopticon EDR/XDR
+platform (a separate polyrepo project — see the workspace-root `../CLAUDE.md`).
+It receives Officer's (`panopticon-agent`) telemetry over authenticated HTTPS,
+persists it, runs detection, and serves a query API to the console. It is
+**not** a fork of `panopticon-detection-engine` — it vendors that project as a
+pinned git submodule at `vendor/eyedetect` and depends on it read-only. See
+`docs/adr/001-repo-topology.md` for why, and `docs/MANAGER_ARCHITECTURE.md`
+for the current package layout.
 
-Read the README with a critical eye — it markets this as "Next-Gen XDR" with "Automated Remediation," but per actual code (see Remediation section below) this is a research/capstone-grade CLI prototype: no web API, no database, no message queue, and remediation is currently simulated bookkeeping, not live system action.
+As of Phase 0, this repo is a FastAPI skeleton: health/readiness/metrics
+endpoints and a migrations runner, nothing more. The ingest endpoint, auth,
+detection worker, and query API arrive in later phases — see
+`docs/ROADMAP.md` for the full sequence and what's actually implemented today.
 
 ## Setup / Build
 
 ```bash
-pip install -r requirements.txt
+git submodule update --init
+pip install -r requirements.txt -r vendor/eyedetect/requirements.txt
 ```
 
-Dependencies are minimal and deliberate: `pyyaml` (rule loading), `pydantic` (rule schema validation), `pytest` (tests). No web framework, DB driver, or ML library — do not add one without a phase-appropriate reason (see the workspace-root `../CLAUDE.md` roadmap; a backend/API is a later phase, not this one).
-
-On Windows, if `python` resolves to the Microsoft Store alias, use `py -m pip install -r requirements.txt` instead.
+Dependencies: `fastapi`, `uvicorn[standard]`, `httpx` (tests), `ruff` (lint) —
+plus whatever `vendor/eyedetect/requirements.txt` needs (`pyyaml`, `pydantic`,
+`pytest`) for the vendored engine. New dependencies beyond this budget need a
+written line of justification, per the workspace-root design brief.
 
 ## Test
 
 ```bash
 pytest -v tests/
+ruff check .
 ```
-
-12 test files under `tests/` (e.g. `test_engine.py`, `test_correlation.py`, `test_full_mitre_suite.py`, `test_remediation_engine.py`, `test_officer_integration.py`). CI (`.github/workflows/ci.yml`) runs this matrix across Python 3.10/3.11/3.12 on `ubuntu-latest`, followed by a smoke-test invocation of `src/main.py` against `samples/master_full_spectrum_simulation.ndjson`. No linting or rule-schema validation step exists in CI currently.
 
 ## Run
 
 ```bash
-# Batch mode against a sample/telemetry file
-python src/main.py --rules rules --telemetry samples/master_full_spectrum_simulation.ndjson
-
-# Live: consume a Schema 0.2 NDJSON stream (e.g. captured from officer-agent.exe)
-python src/main.py --rules rules --officer-ndjson samples/officer_live_sample.ndjson
-
-# Live: spawn the compiled Windows agent directly and stream its stdout
-python src/main.py --rules rules --officer --officer-bin path/to/officer-agent.exe
-
-# MITRE coverage report
-python src/main.py --mitre-matrix --audit-taxonomy
+uvicorn manager.app:app --reload
+curl localhost:8000/healthz
+curl localhost:8000/readyz
+curl localhost:8000/metrics
 ```
 
-There is no server mode — this is a CLI batch/streaming tool with no listening port, no HTTP API, and no database *server* (V2's spool is a local SQLite file).
-
-```bash
-# V2 continuous streaming: bounded queue -> SQLite spool -> incremental alerts,
-# with delivery retry, restart recovery, health/metrics, clean shutdown.
-python src/main.py --rules rules --officer --officer-bin path/to/officer-agent.exe \
-  --reliable --spool-db spool/panopticon-v2.db --output-file alerts.ndjson \
-  --duration 30 --health-file health.json --metrics-file metrics.prom
-```
+Config is environment-variable-backed (`manager/config.py`):
+`PANOPTICON_DB_PATH` (default `panopticon.db`), `PANOPTICON_HOST` (default
+`0.0.0.0`), `PANOPTICON_PORT` (default `8000`).
 
 ## Architecture
 
-Pipeline (`src/main.py` wires this together): load YAML rules from `rules/` -> build `RuleEvaluator` / `ThresholdEngine` / `CorrelationEngine` / cloud & identity engines -> stream events via `LiveTelemetryStream` -> evaluate each event against atomic rules, the cloud engine, identity/UEBA logic, a ransomware canary, a C2 beacon detector, a port scanner, and threshold rules -> emit `Alert` objects -> optionally hand off to `EndpointRemediationEngine` -> print/save.
+- `manager/app.py` — FastAPI app factory + lifespan hook; runs migrations at
+  startup before accepting traffic.
+- `manager/db.py` — sqlite3 connection factory, one connection per thread,
+  WAL/NORMAL/busy_timeout/foreign_keys pragmas. No ORM — matches the style in
+  `vendor/eyedetect/src/reliability/spool.py`.
+- `manager/migrations.py` — numbered migration functions, modeled on that same
+  file's `_migration_1`/`_MIGRATIONS` pattern. Never edit an applied
+  migration; append a new one.
+- `manager/vendor_path.py` — `sys.path` shim so `from src.X import Y` resolves
+  into the vendored engine, matching its own internal import convention.
+- `manager/routers/health.py` — `/healthz` (liveness), `/readyz` (DB +
+  migration check), `/metrics` (reuses the vendored engine's
+  `Metrics.render_prometheus()` and `HealthState`, rather than reinventing
+  them).
+- `manager/detection/factory.py` — stub; will hold the `DetectionRun` wiring
+  duplicated from `vendor/eyedetect/src/main.py` starting Phase 3 (see
+  `docs/adr/001-repo-topology.md` for why it's duplicated, not upstreamed).
 
-- `src/ingestion/` — `officer_adapter.py` (`OfficerIngestionAdapter`, `SCHEMA_VERSION = "0.2"`) normalizes the Officer agent's JSON (`event`/`process`/`parent`/`user`/`host`/`source`/`agent` blocks) into this engine's internal event dict. `live_stream.py` (`LiveTelemetryStream`) supports either reading an NDJSON file line-by-line (auto-detecting the Officer schema) or spawning `officer-agent.exe` as a subprocess and reading its stdout pipe. Full field-level contract: `docs/OFFICER_INTEGRATION.md`.
-- `src/evaluator/`, `src/rules/` — rule loading (`pyyaml`) and pydantic-based schema validation (`src/rules/schema.py`).
-- `src/correlation/` — process tree building, multi-hop correlation graph, risk scoring.
-- `src/alerting/` — `Alert` model and formatters. `Alert.from_detection_result` derives a **deterministic** `alert_id` (hash of `rule_id | event_id | host_id | timestamp | evidence-keys`) so replays / V2 restart-recovery don't emit duplicates.
-- `src/reliability/` — **V2** opt-in streaming pipeline (see `docs/V2_RELIABILITY.md`): `queue.py` (bounded ingestion queue), `spool.py` (`AlertSpool`, SQLite WAL, delivery lifecycle + migration), `retry.py` (bounded backoff), `alert_sink.py` (`IncrementalAlertWriter`, append-safe + torn-tail repair + dedup), `health.py`, `metrics.py`, `pipeline.py` (`StreamingPipeline`). Reached with `--reliable`; `src/pipeline_core.py::DetectionRun` holds the per-event detection logic shared by the legacy loop and the pipeline. Does **not** change Schema 0.2 or the `alerts.ndjson` boundary.
-- `src/remediation/` — see below; also `src/network/`, `src/cloud/`, `src/identity/`, `src/threat_intel/`, `src/mitre/` for domain-specific detection logic.
-- `rules/` — 84 YAML rule files (verified count, matches README's "84+ MITRE Rules" claim), organized by category (`process/`, `identity/`, `persistence/`, `privilege_escalation/`, `network/`, `malware/`, `credential_access/`, `web_api/`, `cloud/`, `lateral_movement/`, `defense_evasion/`, `exfiltration/`, `collection/`, `file/`, `initial_access/`). Custom Sigma/Wazuh-inspired format: `id`, `level` (0-16), `logic: {all/any/none}` conditions, `active_response`, `mitre: {tactic, technique}`, `compliance` tags.
-- `samples/` — NDJSON attack simulations per domain, plus `officer_live_sample.ndjson` (real Schema 0.2 shape) and a MITRE Navigator layer JSON.
-- `scripts/demo_edr_pipeline.py` — terminal visualizer demo, the only script in the repo.
+One SQLite file (`panopticon.db`), one `uvicorn` worker, sync handlers — see
+`docs/adr/003-process-model.md` for why (the vendored engine's `DetectionRun`
+holds in-process mutable correlation state that must never be touched from
+more than one worker/thread).
 
-## Remediation — important gap to know about
+## Changing the wire protocol or the vendored engine's API
 
-`src/remediation/engine.py` (`EndpointRemediationEngine`) defines real-looking actions (`KILL_PROCESS_TREE`, `QUARANTINE_FILE`, `REVERT_PERSISTENCE`, `ISOLATE_HOST`, `LOCK_USER_ACCOUNT`, `REVOKE_CLOUD_ACCESS_KEY`, etc.), but every action currently just appends a `RemediationAction` dataclass and marks it `SUCCESS` (or `SIMULATED` when `dry_run=True`) — **there is no real `subprocess`/`os.kill`/`winreg`/socket call anywhere**, regardless of the `dry_run` flag. `main.py` constructs the engine with `dry_run=False`, and the `--auto-remediate` CLI flag is `action="store_true", default=True"` with no `--no-auto-remediate` counterpart, so it currently can't be disabled from the command line — worth fixing, but low-risk today since no real action fires yet.
+The manager's ingest endpoint (Phase 1+) is a cross-repo API boundary with
+`panopticon-agent`'s `schema/event.schema.json` — see
+`docs/adr/002-wire-protocol-ack-semantics.md`. Bumping `vendor/eyedetect` to a
+new commit is a normal submodule update, but check
+`manager/detection/factory.py` and anything importing `src.*` first, since
+those are the only places this repo's code depends on the vendored package's
+internal shape.
 
-Per the workspace-level policy (`../CLAUDE.md`), remediation must stay dry-run/non-destructive during the current MVP phase — do not wire any of these actions up to real system calls (process kill, filesystem quarantine, host isolation, account lockout) until a later roadmap phase explicitly calls for it.
+## Remediation stays simulated
 
-## Changing the event schema
-
-`officer_adapter.py`'s Schema 0.2 handling is a cross-repo API boundary with `panopticon-agent`'s `schema/event.schema.json`. Before changing how events are parsed here, check the producer schema and this repo's `test_officer_integration.py`, and coordinate the change with the agent repo rather than patching around a mismatch locally.
+The vendored engine's `EndpointRemediationEngine` records `RemediationAction`
+dataclasses only — no real `subprocess`/`os.kill`/`winreg`/socket call
+anywhere. This applies to the manager too: do not wire any remediation action
+to a real system call until a roadmap phase explicitly calls for it.

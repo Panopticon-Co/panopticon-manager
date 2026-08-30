@@ -1,0 +1,11 @@
+[tool.ruff]
+exclude = ["vendor"]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# Import order here is semantically required, not alphabetical: vendor_path's
+# sys.path side effect must run before the src.* imports below it.
+"manager/routers/health.py" = ["I001"]

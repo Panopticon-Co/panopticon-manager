@@ -8,7 +8,8 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability or rule evasion flaw in **eyedetect**, please report it responsibly:
+If you discover a security vulnerability in **panopticon-manager** (or a rule
+evasion flaw in the vendored `eyedetect` engine), please report it responsibly:
 
 1. **Do not create public GitHub issues for security vulnerabilities.**
 2. Send report details to `adityasingh120444@gmail.com`.
