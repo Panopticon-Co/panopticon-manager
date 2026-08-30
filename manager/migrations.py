@@ -25,7 +25,33 @@ def _migration_1(conn: sqlite3.Connection) -> None:
     )
 
 
-_MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [_migration_1]
+def _migration_2(conn: sqlite3.Connection) -> None:
+    """The events table — see docs/adr/002 and docs/adr/003. detect_state and
+    claimed_at sit unused until Phase 3's detection worker; shaped now so the
+    table isn't migrated twice."""
+    conn.execute(
+        """
+        CREATE TABLE events (
+            event_id       TEXT PRIMARY KEY,
+            agent_id       TEXT NOT NULL,
+            host_id        TEXT NOT NULL,
+            category       TEXT NOT NULL,
+            event_timestamp TEXT NOT NULL,
+            ingested_at    TEXT NOT NULL,
+            schema_version TEXT NOT NULL,
+            clock_skew     INTEGER NOT NULL DEFAULT 0,
+            raw_json       TEXT NOT NULL,
+            detect_state   TEXT NOT NULL DEFAULT 'pending',
+            detect_attempts INTEGER NOT NULL DEFAULT 0,
+            claimed_at     TEXT
+        )
+        """
+    )
+    conn.execute("CREATE INDEX ix_events_detect ON events (detect_state, event_timestamp)")
+    conn.execute("CREATE INDEX ix_events_host ON events (host_id, event_timestamp)")
+
+
+_MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [_migration_1, _migration_2]
 
 
 def current_version(conn: sqlite3.Connection) -> int:

@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from manager import config, db, migrations
-from manager.routers import health
+from manager.routers import health, ingest
 
 
 @asynccontextmanager
@@ -25,3 +25,4 @@ async def _lifespan(_: FastAPI):
 
 app = FastAPI(title="Panopticon Manager", lifespan=_lifespan)
 app.include_router(health.router)
+app.include_router(ingest.router)
