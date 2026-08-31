@@ -21,3 +21,13 @@ def test_metrics_is_prometheus_text(client: TestClient) -> None:
     resp = client.get("/metrics")
     assert resp.status_code == 200
     assert "panopticon_uptime_seconds" in resp.text
+
+
+def test_metrics_reports_pending_queue_depth(client: TestClient) -> None:
+    resp = client.get("/metrics")
+    assert resp.status_code == 200
+
+    line = next(
+        ln for ln in resp.text.splitlines() if ln.startswith("panopticon_events_pending ")
+    )
+    assert int(line.split()[1]) >= 0
