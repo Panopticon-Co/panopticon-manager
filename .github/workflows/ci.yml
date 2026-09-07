@@ -18,6 +18,12 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Checkout panopticon-agent (sibling, for schema contract tests)
+        uses: actions/checkout@v4
+        with:
+          repository: Panopticon-Co/panopticon-agent
+          path: panopticon-agent
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
