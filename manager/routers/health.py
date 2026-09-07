@@ -54,4 +54,16 @@ def readyz(response: Response) -> dict:
 
 @router.get("/metrics")
 def metrics_endpoint() -> Response:
-    return Response(content=metrics.render_prometheus(), media_type="text/plain; version=0.0.4")
+    body = metrics.render_prometheus()
+    try:
+        pending = db.connect().execute(
+            "SELECT COUNT(*) AS c FROM events WHERE detect_state = 'pending'"
+        ).fetchone()["c"]
+        body += (
+            "\n# HELP panopticon_events_pending Events awaiting detection.\n"
+            "# TYPE panopticon_events_pending gauge\n"
+            f"panopticon_events_pending {pending}\n"
+        )
+    except Exception:  # pragma: no cover - metrics must never 500
+        pass
+    return Response(content=body, media_type="text/plain; version=0.0.4")

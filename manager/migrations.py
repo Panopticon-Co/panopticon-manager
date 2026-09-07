@@ -51,7 +51,38 @@ def _migration_2(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX ix_events_host ON events (host_id, event_timestamp)")
 
 
-_MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [_migration_1, _migration_2]
+def _migration_3(conn: sqlite3.Connection) -> None:
+    """The alerts table — output of Phase 3's detection worker. Column set is
+    docs/MANAGER_ARCHITECTURE.md §Data. ``alert_id`` is the detection engine's
+    own deterministic ``ALT-<sha1[:8]>`` for atomic alerts, so ``INSERT OR
+    IGNORE`` on it makes replay and crash-recovery idempotent. ``alert_json``
+    keeps the full engine Alert payload for the console and future query API."""
+    conn.execute(
+        """
+        CREATE TABLE alerts (
+            alert_id        TEXT PRIMARY KEY,
+            rule_id         TEXT NOT NULL,
+            level           INTEGER,
+            severity        TEXT,
+            host_id         TEXT,
+            agent_id        TEXT,
+            event_id        TEXT,
+            alert_timestamp TEXT,
+            created_at      TEXT NOT NULL,
+            mitre_tactic    TEXT,
+            mitre_technique TEXT,
+            alert_json      TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX ix_alerts_created ON alerts (created_at DESC, alert_id DESC)")
+
+
+_MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
+    _migration_1,
+    _migration_2,
+    _migration_3,
+]
 
 
 def current_version(conn: sqlite3.Connection) -> int:

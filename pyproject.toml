@@ -9,3 +9,8 @@ select = ["E", "F", "I"]
 # Import order here is semantically required, not alphabetical: vendor_path's
 # sys.path side effect must run before the src.* imports below it.
 "manager/routers/health.py" = ["I001"]
+"manager/detection/factory.py" = ["I001"]
+"manager/detection/worker.py" = ["I001"]
+"tests/test_alert_store.py" = ["I001"]
+"tests/test_detection_factory.py" = ["I001"]
+"tests/test_detection_worker.py" = ["I001"]

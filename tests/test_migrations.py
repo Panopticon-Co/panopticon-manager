@@ -32,6 +32,37 @@ def test_migrate_is_idempotent(tmp_path: Path) -> None:
     assert count == len(migrations._MIGRATIONS)
 
 
+def test_migration_3_creates_alerts_table(tmp_path: Path) -> None:
+    conn = _connect(tmp_path / "test.db")
+    migrations.migrate(conn)
+
+    assert migrations.current_version(conn) == 3
+
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(alerts)")}
+    assert cols == {
+        "alert_id",
+        "rule_id",
+        "level",
+        "severity",
+        "host_id",
+        "agent_id",
+        "event_id",
+        "alert_timestamp",
+        "created_at",
+        "mitre_tactic",
+        "mitre_technique",
+        "alert_json",
+    }
+
+    indexes = {
+        row["name"]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='alerts'"
+        )
+    }
+    assert "ix_alerts_created" in indexes
+
+
 def test_current_version_refuses_future_schema(tmp_path: Path, monkeypatch) -> None:
     conn = _connect(tmp_path / "test.db")
     migrations.migrate(conn)
