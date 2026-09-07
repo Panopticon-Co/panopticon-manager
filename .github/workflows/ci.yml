@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Panopticon-Co/panopticon-agent
-          path: panopticon-agent
+          path: ../panopticon-agent
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
