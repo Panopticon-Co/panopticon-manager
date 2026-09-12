@@ -3,6 +3,25 @@ from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 
 
+def _enroll(client: TestClient, agent_id: str, host_id: str) -> str:
+    response = client.post(
+        "/api/v1/agents/enroll",
+        json={"agent_id": agent_id, "host_id": host_id},
+        headers={"X-Panopticon-Enrollment-Token": "test-bootstrap-token"},
+    )
+    assert response.status_code == 200
+    return str(response.json()["access_token"])
+
+
+def _queue(client: TestClient, command: dict) -> None:
+    response = client.post(
+        "/api/v1/commands",
+        json=command,
+        headers={"X-Panopticon-Command-Token": "test-command-token"},
+    )
+    assert response.status_code == 200
+
+
 def test_closed_command_queue_requires_authorization_and_scopes_polling(client: TestClient) -> None:
     enrollment = client.post(
         "/api/v1/agents/enroll",
@@ -44,3 +63,168 @@ def test_closed_command_queue_requires_authorization_and_scopes_polling(client: 
         headers={"Authorization": f"Bearer {enrollment.json()['access_token']}"},
     )
     assert result.status_code == 200
+
+
+def test_delivered_command_is_not_repolled(client: TestClient) -> None:
+    token = _enroll(client, "agent-1", "host-1")
+    _queue(
+        client,
+        {
+            "command_id": "cmd-delivered",
+            "agent_id": "agent-1",
+            "action": "COLLECT_NETWORK_CONNECTIONS",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        },
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    first = client.get("/api/v1/agents/agent-1/commands", headers=headers)
+    assert len(first.json()["commands"]) == 1
+    second = client.get("/api/v1/agents/agent-1/commands", headers=headers)
+    assert second.json()["commands"] == []
+
+
+def test_expired_command_is_not_polled(client: TestClient) -> None:
+    token = _enroll(client, "agent-1", "host-1")
+    # A command can't be created already-expired (rejected at creation), so queue
+    # one that expires almost immediately and let it lapse before polling.
+    _queue(
+        client,
+        {
+            "command_id": "cmd-expiring",
+            "agent_id": "agent-1",
+            "action": "COLLECT_NETWORK_CONNECTIONS",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(milliseconds=200)).isoformat(),
+        },
+    )
+    import time
+
+    time.sleep(0.3)
+    polled = client.get(
+        "/api/v1/agents/agent-1/commands", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert polled.json()["commands"] == []
+
+
+def test_expired_command_result_is_rejected(client: TestClient) -> None:
+    token = _enroll(client, "agent-1", "host-1")
+    _queue(
+        client,
+        {
+            "command_id": "cmd-expires-before-result",
+            "agent_id": "agent-1",
+            "action": "COLLECT_NETWORK_CONNECTIONS",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        },
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    polled = client.get("/api/v1/agents/agent-1/commands", headers=headers)
+    assert len(polled.json()["commands"]) == 1
+    # Directly expire the already-delivered command to simulate time passing
+    # past its expiry before the agent reports back.
+    import manager.db as db_module
+
+    conn = db_module.connect()
+    lapsed = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    conn.execute(
+        "UPDATE commands SET expires_at = ? WHERE command_id = ?",
+        (lapsed, "cmd-expires-before-result"),
+    )
+    conn.commit()
+    result = client.post(
+        "/api/v1/agents/agent-1/command-results",
+        json={
+            "result_id": "result-expired",
+            "command_id": "cmd-expires-before-result",
+            "outcome": "succeeded",
+        },
+        headers=headers,
+    )
+    assert result.status_code == 422
+
+
+def test_duplicate_command_id_is_rejected_cleanly(client: TestClient) -> None:
+    _enroll(client, "agent-1", "host-1")
+    command = {
+        "command_id": "cmd-dup",
+        "agent_id": "agent-1",
+        "action": "COLLECT_NETWORK_CONNECTIONS",
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+    }
+    _queue(client, command)
+    replay = client.post(
+        "/api/v1/commands",
+        json=command,
+        headers={"X-Panopticon-Command-Token": "test-command-token"},
+    )
+    assert replay.status_code == 409
+
+
+def test_agent_cannot_poll_another_agents_commands(client: TestClient) -> None:
+    token_a = _enroll(client, "agent-a", "host-a")
+    token_b = _enroll(client, "agent-b", "host-b")
+    _queue(
+        client,
+        {
+            "command_id": "cmd-for-a",
+            "agent_id": "agent-a",
+            "action": "COLLECT_NETWORK_CONNECTIONS",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        },
+    )
+    # agent-b's own valid token must never surface agent-a's queued command.
+    polled_by_b = client.get(
+        "/api/v1/agents/agent-a/commands", headers={"Authorization": f"Bearer {token_b}"}
+    )
+    assert polled_by_b.status_code == 401
+    polled_by_a = client.get(
+        "/api/v1/agents/agent-a/commands", headers={"Authorization": f"Bearer {token_a}"}
+    )
+    assert len(polled_by_a.json()["commands"]) == 1
+
+
+def test_result_cannot_be_submitted_for_another_agents_command(client: TestClient) -> None:
+    _enroll(client, "agent-a", "host-a")
+    token_b = _enroll(client, "agent-b", "host-b")
+    _queue(
+        client,
+        {
+            "command_id": "cmd-owned-by-a",
+            "agent_id": "agent-a",
+            "action": "COLLECT_NETWORK_CONNECTIONS",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        },
+    )
+    spoofed = client.post(
+        "/api/v1/agents/agent-b/command-results",
+        json={
+            "result_id": "result-spoof",
+            "command_id": "cmd-owned-by-a",
+            "outcome": "succeeded",
+        },
+        headers={"Authorization": f"Bearer {token_b}"},
+    )
+    assert spoofed.status_code == 422
+
+
+def test_duplicate_result_submission_is_idempotent(client: TestClient) -> None:
+    token = _enroll(client, "agent-1", "host-1")
+    _queue(
+        client,
+        {
+            "command_id": "cmd-dup-result",
+            "agent_id": "agent-1",
+            "action": "COLLECT_NETWORK_CONNECTIONS",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        },
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    client.get("/api/v1/agents/agent-1/commands", headers=headers)
+    payload = {
+        "result_id": "result-dup",
+        "command_id": "cmd-dup-result",
+        "outcome": "succeeded",
+    }
+    first = client.post("/api/v1/agents/agent-1/command-results", json=payload, headers=headers)
+    second = client.post("/api/v1/agents/agent-1/command-results", json=payload, headers=headers)
+    assert first.status_code == 200
+    assert second.status_code == 200

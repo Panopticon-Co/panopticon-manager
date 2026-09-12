@@ -125,6 +125,27 @@ def _migration_6(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_7(conn: sqlite3.Connection) -> None:
+    """Command lifecycle audit trail. The shared command-creation token carries
+    no caller identity, so ``actor`` records what identity information is
+    available at each event (e.g. ``system:command-token`` today, a specific
+    analyst id once the Response Engine adds per-caller auth)."""
+    conn.execute(
+        """
+        CREATE TABLE command_audit (
+            audit_id TEXT PRIMARY KEY,
+            command_id TEXT NOT NULL,
+            event TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            detail TEXT,
+            occurred_at TEXT NOT NULL,
+            FOREIGN KEY(command_id) REFERENCES commands(command_id)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX ix_command_audit_command ON command_audit (command_id, occurred_at)")
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -132,6 +153,7 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_4,
     _migration_5,
     _migration_6,
+    _migration_7,
 ]
 
 

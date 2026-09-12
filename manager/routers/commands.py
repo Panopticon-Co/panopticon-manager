@@ -5,6 +5,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import sqlite3
 from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
@@ -61,6 +62,14 @@ class Command(BaseModel):
         return self
 
 
+def _audit(conn, command_id: str, event: str, actor: str, detail: str | None = None) -> None:
+    conn.execute(
+        "INSERT INTO command_audit (audit_id, command_id, event, actor, detail, occurred_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (str(uuid4()), command_id, event, actor, detail, iso_now()),
+    )
+
+
 class CommandResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
     result_id: str = Field(min_length=1, max_length=128)
@@ -92,33 +101,52 @@ async def enqueue(command: Command, x_panopticon_command_token: str = Header(...
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
     )
-    conn.execute(
-        "INSERT INTO commands (command_id, agent_id, command_json, created_at, expires_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (
-            command.command_id,
-            command.agent_id,
-            json.dumps(payload, separators=(",", ":")),
-            iso_now(),
-            command.expires_at.isoformat(),
-        ),
-    )
-    conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "INSERT INTO commands (command_id, agent_id, command_json, created_at, expires_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                command.command_id,
+                command.agent_id,
+                json.dumps(payload, separators=(",", ":")),
+                iso_now(),
+                command.expires_at.isoformat(),
+            ),
+        )
+        _audit(conn, command.command_id, "created", "system:command-token")
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        raise HTTPException(status_code=409, detail="command_id already exists")
+    except Exception:
+        conn.rollback()
+        raise
     return {"command_id": command.command_id, "queued": True}
 
 
 @router.get("/api/v1/agents/{agent_id}/commands")
 async def poll(agent_id: str, authorization: str | None = Header(default=None)) -> dict:
     require_agent_token(agent_id, authorization)
-    rows = (
-        db.connect()
-        .execute(
-            "SELECT command_json FROM commands WHERE agent_id = ? "
-            "AND delivered_at IS NULL ORDER BY created_at LIMIT 32",
-            (agent_id,),
-        )
-        .fetchall()
-    )
+    conn = db.connect()
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        rows = conn.execute(
+            "SELECT command_id, command_json FROM commands WHERE agent_id = ? "
+            "AND delivered_at IS NULL AND expires_at > ? ORDER BY created_at LIMIT 32",
+            (agent_id, now),
+        ).fetchall()
+        for row in rows:
+            conn.execute(
+                "UPDATE commands SET delivered_at = ? WHERE command_id = ?",
+                (now, row["command_id"]),
+            )
+            _audit(conn, str(row["command_id"]), "dispatched", f"agent:{agent_id}")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     return {"commands": [json.loads(str(row["command_json"])) for row in rows]}
 
 
@@ -129,10 +157,14 @@ async def submit_result(
     require_agent_token(agent_id, authorization)
     conn = db.connect()
     command = conn.execute(
-        "SELECT agent_id, command_json FROM commands WHERE command_id = ?", (result.command_id,)
+        "SELECT agent_id, command_json, expires_at FROM commands WHERE command_id = ?",
+        (result.command_id,),
     ).fetchone()
     if command is None or str(command["agent_id"]) != agent_id:
         raise HTTPException(status_code=422, detail="command does not belong to agent")
+    expires_at = datetime.fromisoformat(str(command["expires_at"]))
+    if expires_at <= datetime.now(expires_at.tzinfo):
+        raise HTTPException(status_code=422, detail="command expired")
     queued = json.loads(str(command["command_json"]))
     if result.correlation_id is not None and result.correlation_id != queued.get("correlation_id"):
         raise HTTPException(status_code=422, detail="result correlation does not match command")
@@ -142,5 +174,6 @@ async def submit_result(
         "VALUES (?, ?, ?, ?, ?, ?)",
         (result.result_id, result.command_id, agent_id, result.outcome, result.detail, iso_now()),
     )
+    _audit(conn, result.command_id, "result_received", f"agent:{agent_id}", result.outcome)
     conn.commit()
     return {"result_id": result.result_id, "accepted": True}
