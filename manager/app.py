@@ -14,7 +14,7 @@ from fastapi import FastAPI
 
 from manager import config, db, migrations
 from manager.detection.worker import DetectionWorker
-from manager.routers import enrollment, health, ingest
+from manager.routers import commands, enrollment, health, ingest
 
 
 @asynccontextmanager
@@ -40,3 +40,4 @@ app = FastAPI(title="Panopticon Manager", lifespan=_lifespan)
 app.include_router(health.router)
 app.include_router(ingest.router)
 app.include_router(enrollment.router)
+app.include_router(commands.router)

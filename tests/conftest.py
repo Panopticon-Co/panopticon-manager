@@ -16,17 +16,19 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("PANOPTICON_ALERTS_PATH", str(tmp_path / "alerts.ndjson"))
     monkeypatch.setenv("PANOPTICON_RULES_DIR", str(FIXTURE_RULES_DIR))
     monkeypatch.setenv("PANOPTICON_ENROLLMENT_TOKEN", "test-bootstrap-token")
+    monkeypatch.setenv("PANOPTICON_COMMAND_TOKEN", "test-command-token")
     # Reimport fresh so module-level state (db._db_path, thread-local conn) doesn't
     # leak between tests.
     import manager.app as app_module
     import manager.db as db_module
     import manager.auth as auth_module
     import manager.routers.enrollment as enrollment_module
+    import manager.routers.commands as commands_module
     import manager.migrations as migrations_module
     import manager.routers.health as health_module
     import manager.routers.ingest as ingest_module
 
-    for mod in (health_module, ingest_module, enrollment_module, auth_module, migrations_module, db_module, app_module):
+    for mod in (health_module, ingest_module, enrollment_module, commands_module, auth_module, migrations_module, db_module, app_module):
         importlib.reload(mod)
 
     # TestClient's context manager runs the lifespan: migrations + detection worker
