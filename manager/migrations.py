@@ -109,12 +109,29 @@ def _migration_5(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX ix_commands_agent ON commands (agent_id, delivered_at, expires_at)")
 
 
+def _migration_6(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE command_results (
+            result_id TEXT PRIMARY KEY,
+            command_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            detail TEXT,
+            received_at TEXT NOT NULL,
+            FOREIGN KEY(command_id) REFERENCES commands(command_id)
+        )
+        """
+    )
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
     _migration_3,
     _migration_4,
     _migration_5,
+    _migration_6,
 ]
 
 

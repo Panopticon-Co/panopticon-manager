@@ -16,3 +16,9 @@ def test_closed_command_queue_requires_authorization_and_scopes_polling(client: 
     polled = client.get("/api/v1/agents/agent-1/commands", headers={"Authorization": f"Bearer {enrollment.json()['access_token']}"})
     assert polled.status_code == 200
     assert polled.json()["commands"][0]["action"] == "COLLECT_PROCESS_INFO"
+    result = client.post(
+        "/api/v1/agents/agent-1/command-results",
+        json={"result_id": "result-1", "command_id": "cmd-1", "outcome": "succeeded", "detail": "bounded"},
+        headers={"Authorization": f"Bearer {enrollment.json()['access_token']}"},
+    )
+    assert result.status_code == 200

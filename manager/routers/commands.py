@@ -22,6 +22,14 @@ class Command(BaseModel):
     expires_at: datetime
     target: dict = Field(default_factory=dict, max_length=16)
 
+
+class CommandResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    result_id: str = Field(min_length=1, max_length=128)
+    command_id: str = Field(min_length=1, max_length=128)
+    outcome: Literal["succeeded", "rejected", "failed"]
+    detail: str | None = Field(default=None, max_length=512)
+
 @router.post("/api/v1/commands")
 async def enqueue(command: Command, x_panopticon_command_token: str = Header(...)) -> dict:
     expected = os.environ.get("PANOPTICON_COMMAND_TOKEN")
@@ -36,3 +44,18 @@ async def poll(agent_id: str, authorization: str | None = Header(default=None)) 
     require_agent_token(agent_id, authorization)
     rows = db.connect().execute("SELECT command_json FROM commands WHERE agent_id = ? AND delivered_at IS NULL ORDER BY created_at LIMIT 32", (agent_id,)).fetchall()
     return {"commands": [json.loads(str(row["command_json"])) for row in rows]}
+
+
+@router.post("/api/v1/agents/{agent_id}/command-results")
+async def submit_result(agent_id: str, result: CommandResult, authorization: str | None = Header(default=None)) -> dict:
+    require_agent_token(agent_id, authorization)
+    conn = db.connect()
+    command = conn.execute("SELECT agent_id FROM commands WHERE command_id = ?", (result.command_id,)).fetchone()
+    if command is None or str(command["agent_id"]) != agent_id:
+        raise HTTPException(status_code=422, detail="command does not belong to agent")
+    conn.execute(
+        "INSERT OR IGNORE INTO command_results (result_id, command_id, agent_id, outcome, detail, received_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (result.result_id, result.command_id, agent_id, result.outcome, result.detail, iso_now()),
+    )
+    conn.commit()
+    return {"result_id": result.result_id, "accepted": True}
