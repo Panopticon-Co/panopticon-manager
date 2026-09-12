@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from manager import db
+from manager.auth import require_agent_token
 from manager.timeutil import iso_now
 from manager.wire.ingest import EventRejection, IngestResponse
 from manager.wire.telemetry import TelemetryEvent
@@ -52,6 +53,7 @@ async def ingest(
     x_panopticon_batch_id: str = Header(...),
     x_panopticon_agent_id: str = Header(...),
     x_panopticon_protocol: str = Header(...),
+    authorization: str | None = Header(default=None),
 ) -> IngestResponse:
     if x_panopticon_protocol != "1":
         detail = f"unsupported protocol {x_panopticon_protocol!r}"
@@ -73,6 +75,18 @@ async def ingest(
     lines = [line for line in text.split("\n") if line.strip()]
     if len(lines) > MAX_BATCH_EVENTS:
         raise HTTPException(status_code=413, detail=f"batch exceeds {MAX_BATCH_EVENTS} events")
+
+    # Schema 0.4 is Linux-capable and requires an enrolled agent. Earlier
+    # schemas retain their existing unauthenticated compatibility behavior.
+    def is_v4(line: str) -> bool:
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            return False
+        return isinstance(payload, dict) and payload.get("schema_version") == "0.4"
+
+    if any(is_v4(line) for line in lines):
+        require_agent_token(x_panopticon_agent_id, authorization)
 
     rejected: list[EventRejection] = []
     accepted_rows: list[tuple] = []

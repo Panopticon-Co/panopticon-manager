@@ -78,10 +78,26 @@ def _migration_3(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX ix_alerts_created ON alerts (created_at DESC, alert_id DESC)")
 
 
+def _migration_4(conn: sqlite3.Connection) -> None:
+    """Enrolled agent identities. Tokens are stored only as SHA-256 digests."""
+    conn.execute(
+        """
+        CREATE TABLE enrolled_agents (
+            agent_id TEXT PRIMARY KEY,
+            host_id TEXT NOT NULL,
+            token_digest TEXT NOT NULL,
+            enrolled_at TEXT NOT NULL,
+            revoked_at TEXT
+        )
+        """
+    )
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
     _migration_3,
+    _migration_4,
 ]
 
 

@@ -99,6 +99,24 @@ def test_linux_procfs_v4_event_is_accepted(client: TestClient) -> None:
         "channel": None,
         "record_id": None,
     }
-    response = client.post("/api/v1/ingest", content=json.dumps(event) + "\n", headers=_headers())
+    enrollment = client.post(
+        "/api/v1/agents/enroll",
+        json={"agent_id": "test-agent", "host_id": event["host"]["id"]},
+        headers={"X-Panopticon-Enrollment-Token": "test-bootstrap-token"},
+    )
+    assert enrollment.status_code == 200
+    response = client.post(
+        "/api/v1/ingest",
+        content=json.dumps(event) + "\n",
+        headers={**_headers(), "Authorization": f"Bearer {enrollment.json()['access_token']}"},
+    )
     assert response.status_code == 200
     assert response.json()["accepted"] == 1
+
+
+def test_linux_procfs_v4_event_requires_enrolled_agent(client: TestClient) -> None:
+    event = json.loads(next(line for line in _SAMPLE.read_text().splitlines() if line.strip()))
+    event["schema_version"] = "0.4"
+    event["source"]["kind"] = "linux_procfs"
+    response = client.post("/api/v1/ingest", content=json.dumps(event) + "\n", headers=_headers())
+    assert response.status_code == 401
