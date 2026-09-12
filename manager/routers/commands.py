@@ -5,11 +5,12 @@ from __future__ import annotations
 import hmac
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
+from uuid import uuid4
 
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from manager import db
 from manager.auth import require_agent_token
@@ -34,6 +35,30 @@ class Command(BaseModel):
     action: Action
     expires_at: datetime
     target: dict = Field(default_factory=dict, max_length=16)
+    correlation_id: str = Field(default_factory=lambda: str(uuid4()), min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def enforce_closed_target_schema(self) -> "Command":
+        process_actions = {"KILL_PROCESS", "COLLECT_PROCESS_INFO"}
+        file_actions = {"COLLECT_FILE", "QUARANTINE_FILE"}
+        if self.action in process_actions:
+            if set(self.target) != {"pid", "start_time_ticks"}:
+                raise ValueError("process action target must contain only pid and start_time_ticks")
+            if not all(
+                isinstance(self.target[key], int)
+                and not isinstance(self.target[key], bool)
+                and self.target[key] > 0
+                for key in ("pid", "start_time_ticks")
+            ):
+                raise ValueError("process action target values must be positive integers")
+        elif self.action in file_actions:
+            if set(self.target) != {"path"} or not isinstance(self.target["path"], str):
+                raise ValueError("file action target must contain only a path")
+            if not self.target["path"] or len(self.target["path"]) > 4096:
+                raise ValueError("file action path is invalid")
+        elif self.target:
+            raise ValueError("this action does not accept a target")
+        return self
 
 
 class CommandResult(BaseModel):
@@ -42,6 +67,7 @@ class CommandResult(BaseModel):
     command_id: str = Field(min_length=1, max_length=128)
     outcome: Literal["succeeded", "rejected", "failed"]
     detail: str | None = Field(default=None, max_length=512)
+    correlation_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 @router.post("/api/v1/commands")
@@ -52,7 +78,20 @@ async def enqueue(command: Command, x_panopticon_command_token: str = Header(...
     if command.expires_at <= datetime.now(command.expires_at.tzinfo):
         raise HTTPException(status_code=422, detail="command expired")
     conn = db.connect()
+    enrolled = conn.execute(
+        "SELECT host_id FROM enrolled_agents WHERE agent_id = ? AND revoked_at IS NULL",
+        (command.agent_id,),
+    ).fetchone()
+    if enrolled is None:
+        raise HTTPException(status_code=422, detail="target agent is not enrolled")
     payload = command.model_dump(mode="json")
+    payload.update(
+        {
+            "schema_version": "1",
+            "host_id": str(enrolled["host_id"]),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
     conn.execute(
         "INSERT INTO commands (command_id, agent_id, command_json, created_at, expires_at) "
         "VALUES (?, ?, ?, ?, ?)",
@@ -90,10 +129,13 @@ async def submit_result(
     require_agent_token(agent_id, authorization)
     conn = db.connect()
     command = conn.execute(
-        "SELECT agent_id FROM commands WHERE command_id = ?", (result.command_id,)
+        "SELECT agent_id, command_json FROM commands WHERE command_id = ?", (result.command_id,)
     ).fetchone()
     if command is None or str(command["agent_id"]) != agent_id:
         raise HTTPException(status_code=422, detail="command does not belong to agent")
+    queued = json.loads(str(command["command_json"]))
+    if result.correlation_id is not None and result.correlation_id != queued.get("correlation_id"):
+        raise HTTPException(status_code=422, detail="result correlation does not match command")
     conn.execute(
         "INSERT OR IGNORE INTO command_results "
         "(result_id, command_id, agent_id, outcome, detail, received_at) "
