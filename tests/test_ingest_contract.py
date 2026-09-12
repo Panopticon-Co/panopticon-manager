@@ -84,3 +84,22 @@ def test_category_type_mismatch_rejected_by_both() -> None:
     event = _base_process_event()
     event["event"]["type"] = "connect"  # valid for network, not process
     _assert_both_reject(event)
+
+
+def test_linux_procfs_source_is_an_additive_v4_extension() -> None:
+    event = _base_process_event()
+    event["schema_version"] = "0.4"
+    event["source"] = {
+        "kind": "linux_procfs",
+        "provider": "procfs",
+        "channel": None,
+        "record_id": None,
+    }
+    jsonschema.validate(event, _SCHEMA)
+    TelemetryEvent.model_validate(event)
+
+
+def test_unknown_source_kind_is_rejected_by_both() -> None:
+    event = _base_process_event()
+    event["source"]["kind"] = "linux_untrusted"
+    _assert_both_reject(event)

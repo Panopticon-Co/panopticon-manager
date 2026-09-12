@@ -43,7 +43,7 @@ class EventMeta(_Strict):
 
 
 class SourceMeta(_Strict):
-    kind: Literal["etw", "sysmon", "windows_event_log"]
+    kind: Literal["etw", "sysmon", "windows_event_log", "linux_procfs"]
     provider: Annotated[str, StringConstraints(min_length=1)]
     channel: NullableStr
     record_id: Optional[int] = Field(ge=0)
@@ -125,7 +125,7 @@ class ImageLoadMeta(_Strict):
 
 
 class TelemetryEvent(_Strict):
-    schema_version: Literal["0.1", "0.2", "0.3"]
+    schema_version: Literal["0.1", "0.2", "0.3", "0.4"]
     event: EventMeta
     source: SourceMeta
     agent: AgentMeta

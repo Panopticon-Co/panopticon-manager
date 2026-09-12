@@ -23,7 +23,7 @@ router = APIRouter()
 MAX_BATCH_EVENTS = 1000
 MAX_BATCH_BYTES = 8 * 1024 * 1024
 CLOCK_SKEW_THRESHOLD_SECONDS = 24 * 3600
-_SUPPORTED_SCHEMA_VERSIONS = ("0.1", "0.2", "0.3")
+_SUPPORTED_SCHEMA_VERSIONS = ("0.1", "0.2", "0.3", "0.4")
 
 
 def _event_id_of(raw: object) -> str | None:

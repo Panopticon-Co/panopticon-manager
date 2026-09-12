@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from pathlib import Path
 
@@ -87,3 +88,17 @@ def test_unsupported_protocol_is_422(client: TestClient) -> None:
     )
 
     assert resp.status_code == 422
+
+
+def test_linux_procfs_v4_event_is_accepted(client: TestClient) -> None:
+    event = json.loads(next(line for line in _SAMPLE.read_text().splitlines() if line.strip()))
+    event["schema_version"] = "0.4"
+    event["source"] = {
+        "kind": "linux_procfs",
+        "provider": "procfs",
+        "channel": None,
+        "record_id": None,
+    }
+    response = client.post("/api/v1/ingest", content=json.dumps(event) + "\n", headers=_headers())
+    assert response.status_code == 200
+    assert response.json()["accepted"] == 1
