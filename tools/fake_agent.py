@@ -34,7 +34,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     lines = [
-        ln for ln in args.file.read_text(encoding="utf-8").splitlines()
+        ln
+        for ln in args.file.read_text(encoding="utf-8").splitlines()
         if ln.strip() and not ln.lstrip().startswith("#")
     ]
     print(f"[*] {len(lines)} event(s) from {args.file} -> {args.url}/api/v1/ingest")

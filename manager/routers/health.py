@@ -56,9 +56,11 @@ def readyz(response: Response) -> dict:
 def metrics_endpoint() -> Response:
     body = metrics.render_prometheus()
     try:
-        pending = db.connect().execute(
-            "SELECT COUNT(*) AS c FROM events WHERE detect_state = 'pending'"
-        ).fetchone()["c"]
+        pending = (
+            db.connect()
+            .execute("SELECT COUNT(*) AS c FROM events WHERE detect_state = 'pending'")
+            .fetchone()["c"]
+        )
         body += (
             "\n# HELP panopticon_events_pending Events awaiting detection.\n"
             "# TYPE panopticon_events_pending gauge\n"

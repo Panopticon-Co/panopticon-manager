@@ -26,7 +26,9 @@ def enroll(agent_id: str, host_id: str, bootstrap_token: str) -> str:
     conn.execute("BEGIN IMMEDIATE")
     try:
         conn.execute(
-            "INSERT OR REPLACE INTO enrolled_agents (agent_id, host_id, token_digest, enrolled_at, revoked_at) VALUES (?, ?, ?, ?, NULL)",
+            "INSERT OR REPLACE INTO enrolled_agents "
+            "(agent_id, host_id, token_digest, enrolled_at, revoked_at) "
+            "VALUES (?, ?, ?, ?, NULL)",
             (agent_id, host_id, _digest(token), iso_now()),
         )
         conn.commit()
@@ -42,8 +44,13 @@ def require_agent_token(agent_id: str, authorization: str | None) -> None:
     token = authorization.removeprefix("Bearer ")
     if not token or len(token) > 512:
         raise HTTPException(status_code=401, detail="agent authentication required")
-    row = db.connect().execute(
-        "SELECT token_digest FROM enrolled_agents WHERE agent_id = ? AND revoked_at IS NULL", (agent_id,)
-    ).fetchone()
+    row = (
+        db.connect()
+        .execute(
+            "SELECT token_digest FROM enrolled_agents WHERE agent_id = ? AND revoked_at IS NULL",
+            (agent_id,),
+        )
+        .fetchone()
+    )
     if row is None or not hmac.compare_digest(str(row["token_digest"]), _digest(token)):
         raise HTTPException(status_code=401, detail="agent authentication required")

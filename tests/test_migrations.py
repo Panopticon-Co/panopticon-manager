@@ -17,9 +17,7 @@ def test_migrate_from_empty_db_creates_schema_migrations(tmp_path: Path) -> None
     version = migrations.migrate(conn)
 
     assert version == len(migrations._MIGRATIONS)
-    row = conn.execute(
-        "SELECT COUNT(*) AS c FROM schema_migrations"
-    ).fetchone()
+    row = conn.execute("SELECT COUNT(*) AS c FROM schema_migrations").fetchone()
     assert row["c"] == len(migrations._MIGRATIONS)
 
 
@@ -32,11 +30,11 @@ def test_migrate_is_idempotent(tmp_path: Path) -> None:
     assert count == len(migrations._MIGRATIONS)
 
 
-def test_migration_3_creates_alerts_table(tmp_path: Path) -> None:
+def test_latest_migration_preserves_alerts_table(tmp_path: Path) -> None:
     conn = _connect(tmp_path / "test.db")
     migrations.migrate(conn)
 
-    assert migrations.current_version(conn) == 3
+    assert migrations.current_version(conn) == len(migrations._MIGRATIONS)
 
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(alerts)")}
     assert cols == {

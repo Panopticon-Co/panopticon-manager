@@ -130,8 +130,8 @@ def test_one_poisoned_event_does_not_stop_the_loop(tmp_path: Path) -> None:
     db = tmp_path / "p.db"
     _migrate(db)
     conn = _open(db)
-    _seed(conn, _raw_whoami(_evt_id("b"), pid=1), state="pending")   # poison
-    _seed(conn, _raw_whoami(_evt_id("c"), pid=2), state="pending")   # healthy
+    _seed(conn, _raw_whoami(_evt_id("b"), pid=1), state="pending")  # poison
+    _seed(conn, _raw_whoami(_evt_id("c"), pid=2), state="pending")  # healthy
 
     w = _worker(tmp_path, db)
     run, sink, writer = build_detection_run(

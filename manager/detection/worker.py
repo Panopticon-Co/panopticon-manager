@@ -134,9 +134,7 @@ class DetectionWorker:
                 sink.agent_id = row["agent_id"]
                 conn.execute("BEGIN IMMEDIATE")
                 run.process_event(event)  # emit -> insert_alert + alerts.ndjson
-                conn.execute(
-                    "UPDATE events SET detect_state='done' WHERE event_id=?", (event_id,)
-                )
+                conn.execute("UPDATE events SET detect_state='done' WHERE event_id=?", (event_id,))
                 conn.commit()
             except Exception:
                 self._mark_failed(conn, event_id)

@@ -77,8 +77,6 @@ def test_certutil_chain_produces_three_alerts(tmp_path: Path) -> None:
     rule_ids = {r["rule_id"] for r in conn.execute("SELECT rule_id FROM alerts")}
     assert {"DET-PROC-003", "DET-NET-006", "CORR-003"} <= rule_ids
 
-    corr = conn.execute(
-        "SELECT * FROM alerts WHERE rule_id = 'CORR-003'"
-    ).fetchone()
+    corr = conn.execute("SELECT * FROM alerts WHERE rule_id = 'CORR-003'").fetchone()
     assert corr["mitre_technique"] == "T1105"
     assert corr["host_id"] == "HOST-B"

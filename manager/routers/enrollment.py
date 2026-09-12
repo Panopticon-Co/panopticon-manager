@@ -23,6 +23,8 @@ class EnrollmentResponse(BaseModel):
 
 
 @router.post("/api/v1/agents/enroll", response_model=EnrollmentResponse)
-async def enrollment(request: EnrollmentRequest, x_panopticon_enrollment_token: str = Header(...)) -> EnrollmentResponse:
+async def enrollment(
+    request: EnrollmentRequest, x_panopticon_enrollment_token: str = Header(...)
+) -> EnrollmentResponse:
     token = enroll(request.agent_id, request.host_id, x_panopticon_enrollment_token)
     return EnrollmentResponse(agent_id=request.agent_id, access_token=token)

@@ -65,6 +65,7 @@ def test_replay_produces_gate_a_and_b_alerts(
         importlib.reload(mod)
 
     with TestClient(app_module.app) as client:
+
         def fake_urlopen(req, *a, **kw):
             resp = client.post(
                 "/api/v1/ingest",
