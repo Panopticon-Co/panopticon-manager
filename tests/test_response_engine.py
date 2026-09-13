@@ -168,10 +168,11 @@ def test_on_alert_created_auto_safe_action_is_enqueued_immediately(monkeypatch) 
     conn = _conn()
     _enroll_agent(conn)
     _insert_bare_alert(conn, "ALT-4")
-    # eyedetect's real vocabulary (TERMINATE_PROCESS/ISOLATE_HOST/BLOCK_FIREWALL_IP)
-    # never maps onto an AUTO_SAFE command today -- exercise that branch directly
-    # against the closed action-to-tier table rather than waiting for eyedetect
-    # to grow a new recommendation type.
+    # A synthetic mapping exercised directly against the closed action-to-tier
+    # table, independent of translate_recommendation's actual vocabulary --
+    # see test_on_alert_created_collect_process_info_is_enqueued_immediately
+    # below for the real (non-monkeypatched) equivalent now that eyedetect's
+    # vocabulary genuinely produces COLLECT_PROCESS_INFO.
     def _fake_translate(action, active_response):
         return "COLLECT_PROCESS_INFO", {"pid": 1, "start_time_ticks": 2}, "test mapping"
 
@@ -185,6 +186,48 @@ def test_on_alert_created_auto_safe_action_is_enqueued_immediately(monkeypatch) 
     command = _command_row(conn, row["command_id"])
     assert json.loads(command["command_json"])["action"] == "COLLECT_PROCESS_INFO"
     assert command["alert_id"] == "ALT-4"
+
+
+def test_on_alert_created_collect_process_info_is_enqueued_immediately() -> None:
+    # Real (non-monkeypatched) path: eyedetect's ActiveResponseAction can now
+    # genuinely carry action="COLLECT_PROCESS_INFO", and
+    # response_engine.translate_recommendation genuinely maps it -- this
+    # proves the whole chain without faking any layer.
+    conn = _conn()
+    _enroll_agent(conn)
+    _insert_bare_alert(conn, "ALT-4B")
+    active_response = {
+        "action": "COLLECT_PROCESS_INFO",
+        "target_pid": 4242,
+        "target_start_time_ticks": 123456789,
+    }
+    response.on_alert_created(conn, _Alert(alert_id="ALT-4B", active_response=active_response))
+    row = _response_row(conn, _response_id_for_alert(conn, "ALT-4B"))
+    assert row["tier"] == "AUTO_SAFE"
+    assert row["lifecycle_state"] == "AUTHORIZED"
+    assert row["command_id"] is not None
+    command = _command_row(conn, row["command_id"])
+    command_json = json.loads(command["command_json"])
+    assert command_json["action"] == "COLLECT_PROCESS_INFO"
+    assert command_json["target"] == {"pid": 4242, "start_time_ticks": 123456789}
+    assert command["alert_id"] == "ALT-4B"
+
+
+def test_on_alert_created_collect_network_connections_is_enqueued_immediately() -> None:
+    conn = _conn()
+    _enroll_agent(conn)
+    _insert_bare_alert(conn, "ALT-4C")
+    active_response = {"action": "COLLECT_NETWORK_CONNECTIONS"}
+    response.on_alert_created(conn, _Alert(alert_id="ALT-4C", active_response=active_response))
+    row = _response_row(conn, _response_id_for_alert(conn, "ALT-4C"))
+    assert row["tier"] == "AUTO_SAFE"
+    assert row["lifecycle_state"] == "AUTHORIZED"
+    assert row["command_id"] is not None
+    command = _command_row(conn, row["command_id"])
+    command_json = json.loads(command["command_json"])
+    assert command_json["action"] == "COLLECT_NETWORK_CONNECTIONS"
+    assert command_json["target"] == {}
+    assert command["alert_id"] == "ALT-4C"
 
 
 def test_on_alert_created_never_raises_on_internal_failure(monkeypatch) -> None:
