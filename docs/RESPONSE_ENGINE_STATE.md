@@ -1,19 +1,30 @@
 # Response Engine — implementation state / handoff
 
-Last updated: 2026-09-13, after a second Manager-focused pass that
-implemented the `ACCEPTED` lifecycle state. This document exists so a future
-session (or a compacted context) can reconstruct exactly what is real, what
-is verified, and what is next, without re-deriving it from scratch.
-Re-verify against the actual repos before trusting anything here as still
-current — treat this as a snapshot, not a source of truth.
+Last updated: 2026-09-13, after a third pass that (a) opened the Manager PR
+and (b) adopted `ACCEPTED` in `panopticon-linux-agent`. This document exists
+so a future session (or a compacted context) can reconstruct exactly what is
+real, what is verified, and what is next, without re-deriving it from
+scratch. Re-verify against the actual repos before trusting anything here as
+still current — treat this as a snapshot, not a source of truth.
 
-**Outstanding**: commits `ccc25d2`, `f777ff6`, `b1553b1` are pushed to
-`origin/feat/response-engine-extraction-and-fixes` in `panopticon-manager`
-but `gh pr create` has failed repeatedly with transient GitHub API 502/
-GraphQL errors (an external outage, not a local problem — `git push` itself
-succeeds every time). Open the PR manually or retry `gh pr create` once
-GitHub recovers:
-`https://github.com/Panopticon-Co/panopticon-manager/compare/main...feat/response-engine-extraction-and-fixes`
+**Resolved**: `gh pr create` succeeded on retry —
+[panopticon-manager#4](https://github.com/Panopticon-Co/panopticon-manager/pull/4)
+is open with commits `ccc25d2`, `f777ff6`, `b1553b1`, `3b9c27f`.
+
+**Capability discovery, this pass**: this session's Windows environment has
+a working Docker Desktop install (the daemon was stopped, not absent —
+`Start-Process 'Docker Desktop.exe'` plus a short poll brought it up). That
+means `panopticon-linux-agent`'s actual Linux/CMake/Ninja build and its
+`panopticon-linux-core-tests` suite ARE runnable from this environment via
+`docker run ubuntu:24.04 ...` matching its CI job, even though there is no
+native Linux toolchain and no persistent WSL distro with build tools. This
+un-blocks C++-side verification (build, CTest, and — with the sanitizer
+image's extra packages — ASan/UBSan) that earlier passes had assumed
+required the not-yet-available VMware environment. It does NOT unblock
+anything that needs real kernel networking/nftables/namespaces beyond what
+a container provides, or the isolation helper's actual privileged
+CAP_NET_ADMIN behavior against a real interface — those remain genuinely
+environment-dependent per directive §28.
 
 ## Architectural decision
 
@@ -181,19 +192,16 @@ reasoning from that repository's side.
 
 ## Not yet done — genuinely missing, not fabricated as complete
 
-1. **`ACCEPTED` is implemented in Manager but not yet adopted by any real
-   agent.** `POST /api/v1/agents/{agent_id}/commands/{command_id}/accept`
-   exists, is authenticated, idempotent, and tested (see above) — but
-   neither `panopticon-linux-agent` nor a Windows agent has been changed to
-   actually call it. It is deliberately optional/backward-compatible (a
-   result from plain `DISPATCHED` still works), so this is not a breaking
-   gap, just an unfinished adoption: the Linux agent's poll/execute/report
-   loop could call `accept()` right after it validates a command and before
-   it starts executing, giving Manager a real "the endpoint has this and is
-   about to run it" signal instead of only ever seeing DISPATCHED-then-
-   terminal. Not done in this pass because it requires a `panopticon-linux-
-   agent` change (out of a Manager-only session's repo) and, once Windows
-   exists, the same there.
+1. **RESOLVED this pass.** `panopticon-linux-agent` @ `9f73fcb` ("feat(response):
+   send DISPATCHED->ACCEPTED acknowledgement before executing a command")
+   adds `curl_https_client::accept_command` and calls it in `main.cpp`
+   immediately after `command_gate::validate_and_mark` succeeds and before
+   any action handler runs. Best-effort by design: the call's outcome is
+   never checked, since Manager still accepts a result submitted straight
+   from `DISPATCHED`. Verified with a full Ubuntu 24.04 container build
+   (cmake+ninja+ctest matching CI): compiles clean,
+   `panopticon-linux-core-tests` passes. A Windows agent still has no
+   response path at all (see item 3 below), so it has nothing to adopt yet.
 2. **`TERMINATE_PROCESS` can never map to `KILL_PROCESS`.**
    `ActiveResponseAction` carries no process-creation-timestamp field, and
    the Linux agent's `KILL_PROCESS`/`COLLECT_PROCESS_INFO` target schema
@@ -234,17 +242,18 @@ reasoning from that repository's side.
 
 ## Next implementation task (recommended order)
 
-1. Get this Manager-only pass's changes reviewed and merged (PR creation is
-   currently blocked by a transient GitHub API outage — see top of this
-   document); watch CI go green on the actual GitHub Actions run (not just
-   local `pytest`/`ruff`).
-2. Update `panopticon-linux-agent`'s command-execution loop to call the new
-   `accept()` endpoint right after it validates a dispatched command and
-   before it starts executing, so `ACCEPTED` actually appears in practice
-   instead of only being reachable via a direct test/API call. This is a
-   small, additive change to that repo (one new outbound HTTP call in its
-   existing poll/execute/report loop) — no wire-contract change was needed
-   in Manager to support it, since `accept()` was designed to be optional.
+1. Get PR #4 reviewed and merged; watch CI go green on the actual GitHub
+   Actions run for both `panopticon-manager` and `panopticon-response-engine`
+   (not just local `pytest`/`ruff`), and push the `panopticon-linux-agent`
+   ACCEPTED-adoption commit (`9f73fcb`, already on `origin/main`) through its
+   own CI the same way.
+2. Add the isolation-helper crash/IPC-fuzz tests in `panopticon-linux-agent`
+   (directive-mandated: helper crash before/during operation, restart with
+   existing state, release after restart, malformed IPC, unauthorized peer,
+   oversized IPC, repeated isolate, repeated release). Now genuinely
+   unblocked in this environment via the Docker-based Ubuntu 24.04 build
+   used to verify item 1 above — no VMware needed for the parser/unit-test
+   layer of this work, only for real-network/real-nftables validation.
 3. Design and review the `TERMINATE_PROCESS -> KILL_PROCESS` start-time
    threading as its own ADR in `panopticon-detection-engine`, with explicit
    attention to PID-reuse correctness, before writing code.
@@ -256,13 +265,10 @@ reasoning from that repository's side.
 5. Windows agent response support is a separate, large body of work — scope
    it as its own milestone rather than folding it into a Response Engine
    pass.
-6. Add the isolation-helper crash/IPC-fuzz tests to `panopticon-linux-agent`
-   (item 4 above) — genuinely still outstanding from the prior directive's
-   explicit ask and not touched in either Manager pass, since it requires
-   that repo's C++/CMake/Linux build environment.
 
 ## Known blockers
 
-None that block further Manager-side work. Items 2 and 3 above are
+None that block further Linux/Manager-side work. Items 3/4 above are
 correctness-sensitive design decisions, not "blocked," and should not be
-rushed past design review.
+rushed past design review. Item 5 (Windows) and the real-network/real-
+nftables portion of item 2 remain genuinely environment/scope-dependent.
