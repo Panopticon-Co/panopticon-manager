@@ -1,9 +1,24 @@
 # Response Engine — implementation state / handoff
 
-Last updated: 2026-09-13, after a fifth pass that created
+Last updated: 2026-09-13, after a sixth pass that (1) wired the
+panopticon-contracts golden fixtures into all four implementer repos'
+real test suites (verified green on actual GitHub Actions CI in every
+case, not just local pytest/ctest), (2) found and fixed two real contract
+mismatches the initial contracts audit missed (a missing `created_at` wire
+field, and panopticon-linux-agent silently tolerating unrecognized
+top-level command fields), (3) independently verified panopticon-agent's
+receipt-code collapse is byte-for-byte identical to panopticon-linux-agent's
+and locked both with regression tests, (4) resolved the outstanding Windows
+`start_time_ticks` telemetry-producer gap end-to-end, and (5) found and fixed
+three unrelated, already-red CI runs (ruff line-length violations in
+panopticon-response-engine and panopticon-manager, and a missing
+`submodules: true` on panopticon-response-engine's checkout step) that had
+been silently failing across multiple prior sessions' commits despite local
+verification passing — see "NEW this pass" below for full detail. Built on
+top of a fifth pass that created
 [`Panopticon-Co/panopticon-contracts`](https://github.com/Panopticon-Co/panopticon-contracts)
-(canonical cross-repo wire contract docs, JSON Schema, and golden fixtures;
-see "NEW this pass" below), on top of a fourth pass that threaded
+(canonical cross-repo wire contract docs, JSON Schema, and golden fixtures),
+and a fourth pass that threaded
 `TERMINATE_PROCESS -> KILL_PROCESS` start-time data across five repos
 (response-engine ADR, schema, both agents' producer/consumer sides,
 detection engine, and Manager) and landed Windows agent response support
@@ -14,7 +29,104 @@ real, what is verified, and what is next, without re-deriving it from
 scratch. Re-verify against the actual repos before trusting anything here as
 still current — treat this as a snapshot, not a source of truth.
 
-**NEW this pass: `panopticon-contracts` created.** Audited the actual wire
+**NEW this pass (sixth): Priorities 1, 2, 3, and 5 of the post-contracts
+directive completed and verified on real CI.**
+
+- **Priority 1 (wire fixtures into implementer tests) — complete for all
+  four repos**, every one verified on real GitHub Actions CI, not just
+  local:
+  - `panopticon-response-engine`: vendored `panopticon-contracts` as a
+    test-only git submodule (`tests/vendor/panopticon-contracts`);
+    `tests/test_contract_fixtures.py` proves `Command`/`CommandResult`
+    accept/reject the canonical fixtures (59 tests total, up from 43).
+  - `panopticon-manager`: `tests/test_response_contract.py` (sibling-repo
+    checkout, matching the existing `test_ingest_contract.py` convention for
+    `panopticon-agent`'s event schema) calls the REAL
+    `authorize_and_enqueue()` path for every closed action and validates the
+    actual stored `commands.command_json` against
+    `panopticon-contracts/schema/command.schema.json` (102 tests total, up
+    from 95).
+  - `panopticon-linux-agent`: no JSON-file-reading test harness exists here,
+    so fixture *scenarios* were hand-reproduced as literal test cases after a
+    direct source audit (see Priority 2 below) rather than loading fixture
+    files.
+  - `panopticon-agent`: `tests/response_tests.cpp` now directly loads
+    `panopticon-contracts` fixture files (sibling checkout, resolved via a
+    new `PANOPTICON_CONTRACTS_DIR` CMake compile definition mirroring the
+    existing `OFFICER_EVENT_SCHEMA_PATH` pattern) and proves every valid
+    fixture parses and every parse-level-invalid fixture is rejected.
+  - `panopticon-contracts/docs/COMPATIBILITY.md` records the full matrix.
+- **Priority 2 (reconcile the two contract facts) — both facts investigated
+  against real source, not assumed, and both were real, not documentation-only
+  bugs**:
+  - **Fact A was actually incomplete, not just under-documented**: Manager's
+    `authorize_and_enqueue` injects **three** fields into the wire `Command`
+    (`host_id`, `schema_version`, AND `created_at`), not two —
+    `panopticon-contracts`' first published revision omitted `created_at`
+    entirely, which both native agents actually require and validate
+    (`created_at < expires_at`). Fixed in `panopticon-contracts`: schema,
+    docs, and every fixture updated; re-verified green on its own CI.
+  - **Fact B surfaced a real, if low-severity, security-invariant gap**:
+    direct source comparison found `panopticon-agent`'s parser explicitly
+    enumerates and rejects any unrecognized top-level command field
+    (`allowed_keys`), but `panopticon-linux-agent`'s hand-rolled
+    substring-scanning parser did not check for extra fields at all — a
+    smuggled field would have been silently ignored rather than rejected. No
+    handler ever acted on an unrecognized field, so this was not exploitable,
+    but it violated the documented closed-envelope invariant. **Fixed** (the
+    implementation, not the contract, per the directive's explicit
+    instruction) by adding `has_only_known_top_level_keys()` to
+    `panopticon-linux-agent/src/command.cpp`, plus a regression test.
+    Verified via Docker (`ubuntu:24.04`) build+ctest and real GitHub Actions
+    CI, including the pre-existing ASan/UBSan sanitized job.
+- **Priority 3 (Windows result mapping) — independently verified, not
+  assumed**: read `panopticon-agent/src/response/command.cpp`'s
+  `serialize_command_result` directly and confirmed its `ReceiptCode` ->
+  wire `outcome` collapse is byte-for-byte identical to
+  `panopticon-linux-agent`'s (`succeeded->succeeded`,
+  `execution_failed->failed`, everything else `->rejected`). Both repos now
+  have an explicit regression test locking this mapping so they cannot
+  silently drift apart.
+- **Priority 5 (Windows `start_time_ticks`) — resolved end-to-end.** Root
+  cause: `panopticon-agent`'s ETW collector
+  (`decode_process_start` in `etw_process_collector.cpp`) already read the
+  raw `CreateTime` FILETIME off the kernel event to compute a human-readable
+  timestamp, then discarded the raw tick value — the exact quantity
+  `GetProcessTimes()` independently recomputes in the response subsystem for
+  PID-reuse-safe `KILL_PROCESS` targeting. Threaded this value, unchanged,
+  through `RawProcessEvent` -> `ProcessMetadata` -> the wire
+  `process.start_time_ticks` field the schema already declared (from an
+  earlier pass). Sysmon's XML events expose only a formatted timestamp with
+  no raw tick count, so Sysmon-sourced events deliberately leave this field
+  null (documented at the call site) — a Sysmon-sourced `TERMINATE_PROCESS`
+  recommendation will still correctly fail closed, the existing safe
+  behavior for a source that cannot supply a PID-reuse-safe target. No
+  existing test needed modification (the deserializer already requires the
+  field present-but-possibly-null on every event, satisfied automatically
+  since the serializer now always emits it); added a dedicated regression
+  test. Verified via a real MSVC build: full rebuild + ctest, 9/9 passed.
+  **Practical implication**: a real Windows endpoint's ETW-sourced
+  `TERMINATE_PROCESS` recommendation can now actually reach a dispatched
+  `KILL_PROCESS` command for the first time — previously this path was
+  unreachable in practice on Windows regardless of how correct the
+  Detection Engine -> Response Engine translation logic was, because the
+  required field never existed on the wire.
+- **Found and fixed three already-red CI runs, unrelated to this pass's own
+  changes, that had been silently failing across multiple prior sessions**:
+  a `ruff` line-length violation in `panopticon-response-engine/tests/
+  test_policy_and_recommendation.py` (from the fourth pass's TERMINATE_PROCESS
+  work); the same class of bug in `panopticon-manager/tests/
+  test_response_engine.py` (blocking PR #4's CI on every run since it
+  landed); and `panopticon-response-engine`'s CI checkout step missing
+  `submodules: true`, which is a bug introduced by this pass's own submodule
+  addition but is recorded here as a reminder that a submodule addition is
+  incomplete without also updating the consuming CI workflow. **Lesson for
+  future sessions**: local `pytest`/`ctest` passing is not sufficient
+  evidence a change is actually green — this pass caught all of the above
+  only by explicitly running `gh run watch` against the real GitHub Actions
+  run after every push, which prior sessions had not consistently done.
+
+**NEW this pass (fifth): `panopticon-contracts` created.** Audited the actual wire
 behavior across `panopticon-response-engine`, `panopticon-manager`,
 `panopticon-linux-agent`, and `panopticon-agent` (not their docs) and
 published a new, separate repository —
@@ -60,19 +172,17 @@ build/run time yet (see "Not yet done" below). Concretely it contains:
   (`gh run list`, run id `34757871084`, `success`, 11s) immediately after the
   initial push, not just locally.
 
-**Not yet done (explicitly out of scope for this pass, tracked here so it
-isn't lost):** none of `panopticon-manager`, `panopticon-linux-agent`, or
-`panopticon-agent` has been wired to load `panopticon-contracts`' fixture
-files into its own test suite yet (`docs/COMPATIBILITY.md`'s "Next step"
-section in the new repo records the plan: submodule or vendored copy,
-whichever fits each repo's existing test infra with least new machinery).
-The Windows agent's `receipt_code`-equivalent collapse mapping was not
-independently re-read field-by-field against the Linux mapping this pass —
-recorded as a known gap in the new repo's `docs/COMPATIBILITY.md` rather than
-assumed identical. `panopticon-agent`'s own Schema 0.4 producer change to
-emit live `process.start_time_ticks` telemetry (unblocked since the Windows
-agent response-support merge landed) is also still outstanding — see item
-3/5 below, unchanged from the previous pass.
+**Historical note (all three items below were resolved in the sixth pass —
+see "NEW this pass (sixth)" above the fifth-pass section this originally
+belonged to; kept here rather than deleted so the fifth pass's own record
+stays accurate to what was true at the time it was written):** at the time
+this fifth-pass section was written, none of `panopticon-manager`,
+`panopticon-linux-agent`, or `panopticon-agent` had been wired to load
+`panopticon-contracts`' fixtures yet, the Windows agent's `receipt_code`-
+equivalent collapse mapping had not been independently re-read against the
+Linux mapping, and `panopticon-agent`'s Schema 0.4 producer change to emit
+live `process.start_time_ticks` telemetry was still outstanding. All three
+are now done.
 
 **Resolved**: `gh pr create` succeeded on retry —
 [panopticon-manager#4](https://github.com/Panopticon-Co/panopticon-manager/pull/4)
@@ -360,12 +470,12 @@ reasoning from that repository's side.
      (5 pre-existing suites unchanged + new `officer-response-tests`),
      independently re-verified (not just trusted from the implementing
      pass's own report).
-   - **Still outstanding**: `panopticon-agent`'s own Schema 0.4 producer
-     change to emit `process.start_time_ticks` in telemetry (item 0 above)
-     — deliberately deferred during this pass to avoid a file-level
-     collision with the concurrent response-engine implementation; Windows-
-     originated detections still safely fail closed for `KILL_PROCESS`
-     translation until this lands.
+   - **Resolved in the sixth pass**: `panopticon-agent`'s Schema 0.4 producer
+     change to emit `process.start_time_ticks` in live telemetry (deferred at
+     the time this item was written, to avoid a file-level collision with the
+     concurrent response-engine implementation) has landed — see "NEW this
+     pass (sixth)" near the top of this document for the full change and its
+     verification.
 4. **No isolation-helper crash-mid-operation test and no IPC fuzz test**
    exist in `panopticon-linux-agent` (confirmed by its own audit pass) —
    the ADR asserts fail-closed re-apply-on-restart behavior
