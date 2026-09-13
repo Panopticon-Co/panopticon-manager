@@ -1,3 +1,6 @@
 [submodule "vendor/eyedetect"]
 	path = vendor/eyedetect
 	url = https://github.com/Panopticon-Co/panopticon-detection-engine.git
+[submodule "vendor/response_engine"]
+	path = vendor/response_engine
+	url = https://github.com/Panopticon-Co/panopticon-response-engine.git

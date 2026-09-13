@@ -206,6 +206,84 @@ def test_result_cannot_be_submitted_for_another_agents_command(client: TestClien
     assert spoofed.status_code == 422
 
 
+def test_expired_command_transitions_to_expired_lifecycle_state(client: TestClient) -> None:
+    _enroll(client, "agent-1", "host-1")
+    _queue(
+        client,
+        {
+            "command_id": "cmd-lifecycle-expiry",
+            "agent_id": "agent-1",
+            "action": "COLLECT_NETWORK_CONNECTIONS",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(milliseconds=200)).isoformat(),
+        },
+    )
+    import time
+
+    time.sleep(0.3)
+    # Any authenticated poll (even for a different, unrelated agent) sweeps
+    # every stale command, since there is no separate scheduler.
+    other_token = _enroll(client, "agent-2", "host-2")
+    client.get(
+        "/api/v1/agents/agent-2/commands", headers={"Authorization": f"Bearer {other_token}"}
+    )
+    import manager.db as db_module
+
+    row = db_module.connect().execute(
+        "SELECT lifecycle_state FROM commands WHERE command_id = ?", ("cmd-lifecycle-expiry",)
+    ).fetchone()
+    assert row["lifecycle_state"] == "EXPIRED"
+
+
+def test_second_distinct_result_never_overwrites_a_terminal_outcome(client: TestClient) -> None:
+    token = _enroll(client, "agent-1", "host-1")
+    _queue(
+        client,
+        {
+            "command_id": "cmd-replayed-result",
+            "agent_id": "agent-1",
+            "action": "COLLECT_NETWORK_CONNECTIONS",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        },
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    client.get("/api/v1/agents/agent-1/commands", headers=headers)
+    first = client.post(
+        "/api/v1/agents/agent-1/command-results",
+        json={
+            "result_id": "result-real",
+            "command_id": "cmd-replayed-result",
+            "outcome": "succeeded",
+        },
+        headers=headers,
+    )
+    assert first.status_code == 200
+    # A second, distinct result_id for the same command (a forged/replayed or
+    # buggy duplicate submission) must be accepted (not error the caller) but
+    # must never flip the already-terminal lifecycle_state.
+    second = client.post(
+        "/api/v1/agents/agent-1/command-results",
+        json={
+            "result_id": "result-forged",
+            "command_id": "cmd-replayed-result",
+            "outcome": "failed",
+        },
+        headers=headers,
+    )
+    assert second.status_code == 200
+    import manager.db as db_module
+
+    row = db_module.connect().execute(
+        "SELECT lifecycle_state FROM commands WHERE command_id = ?", ("cmd-replayed-result",)
+    ).fetchone()
+    assert row["lifecycle_state"] == "SUCCEEDED"
+    count = db_module.connect().execute(
+        "SELECT COUNT(*) AS c FROM command_results WHERE command_id = ?",
+        ("cmd-replayed-result",),
+    ).fetchone()["c"]
+    # The forged/duplicate result_id is not persisted as a second result row.
+    assert count == 1
+
+
 def test_duplicate_result_submission_is_idempotent(client: TestClient) -> None:
     token = _enroll(client, "agent-1", "host-1")
     _queue(

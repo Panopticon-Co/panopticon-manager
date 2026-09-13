@@ -145,6 +145,35 @@ def test_reject_pending_response_action_never_creates_a_command(client: TestClie
     assert rows[0]["decided_reason"] == "confirmed benign"
 
 
+def test_stale_pending_response_action_expires_and_cannot_be_authorized(
+    client: TestClient,
+) -> None:
+    _enroll(client, "agent-1", "host-1")
+    analyst_token = _enroll_analyst(client, "alice")
+    response_id = _stage_response_action("agent-1", "ALT-int-expiry")
+
+    from datetime import timedelta
+
+    import manager.db as db_module
+
+    conn = db_module.connect()
+    stale = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    conn.execute(
+        "UPDATE response_actions SET created_at = ? WHERE response_id = ?",
+        (stale, response_id),
+    )
+    conn.commit()
+
+    headers = {"Authorization": f"Bearer {analyst_token}"}
+    # Listing sweeps stale PENDING rows to EXPIRED as a side effect of the read.
+    listed = client.get("/api/v1/response-actions?state=EXPIRED", headers=headers)
+    rows = [row for row in listed.json()["response_actions"] if row["response_id"] == response_id]
+    assert len(rows) == 1
+
+    authorized = client.post(f"/api/v1/response-actions/{response_id}/authorize", headers=headers)
+    assert authorized.status_code == 404
+
+
 def test_kill_process_isolate_host_and_release_always_require_analyst_approval(
     client: TestClient,
 ) -> None:

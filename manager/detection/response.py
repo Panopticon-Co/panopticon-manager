@@ -26,9 +26,20 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import HTTPException
+from response_engine.policy import classify_tier
+from response_engine.recommendation import translate_recommendation
 
 from manager.routers.commands import Command, authorize_and_enqueue
 from manager.timeutil import iso_now
+
+__all__ = [
+    "authorize_response_action",
+    "classify_tier",
+    "expire_stale_response_actions",
+    "on_alert_created",
+    "reject_response_action",
+    "translate_recommendation",
+]
 
 _log = logging.getLogger(__name__)
 
@@ -37,54 +48,34 @@ _log = logging.getLogger(__name__)
 # bounded so a stale one doesn't linger indefinitely in the queue view.
 _DEFAULT_COMMAND_TTL = timedelta(minutes=15)
 
-# Locked decisions (see the approved implementation plan): KILL_PROCESS,
-# ISOLATE_HOST, and RELEASE_HOST_ISOLATION always require analyst approval.
-# COLLECT_PROCESS_INFO/COLLECT_NETWORK_CONNECTIONS are read-only and safe to
-# auto-enqueue. COLLECT_FILE and QUARANTINE_FILE default to requiring
-# approval too -- COLLECT_FILE has no operator-configured path allowlist
-# implemented yet (a real path-scoped AUTO_SAFE carve-out is future work,
-# not something to fake now), and QUARANTINE_FILE is not read-only.
-_TIERS: dict[str, str] = {
-    "COLLECT_PROCESS_INFO": "AUTO_SAFE",
-    "COLLECT_NETWORK_CONNECTIONS": "AUTO_SAFE",
-    "COLLECT_FILE": "ANALYST_APPROVAL",
-    "QUARANTINE_FILE": "ANALYST_APPROVAL",
-    "KILL_PROCESS": "ANALYST_APPROVAL",
-    "ISOLATE_HOST": "ANALYST_APPROVAL",
-    "RELEASE_HOST_ISOLATION": "ANALYST_APPROVAL",
-}
+# How long a PENDING response_actions row (one awaiting analyst approve/
+# reject) is allowed to sit undecided before expire_stale_response_actions()
+# flips it to EXPIRED. Previously nothing ever did this -- an ignored
+# recommendation just stayed PENDING in the analyst queue forever, with no
+# lifecycle record distinguishing "nobody decided" from "still awaiting
+# decision". Same window as _DEFAULT_COMMAND_TTL; not locked to match it,
+# just a reasonable shared default until real usage says otherwise.
+_RESPONSE_ACTION_TTL = timedelta(minutes=15)
 
 
-def classify_tier(action: str) -> str:
-    return _TIERS.get(action, "ANALYST_APPROVAL")
-
-
-def translate_recommendation(
-    action: str, active_response: dict[str, Any]
-) -> tuple[str, dict[str, Any], str] | None:
-    """Maps eyedetect's ActiveResponseAction.action vocabulary onto the
-    closed 7-action Command enum. Returns (command_action, target,
-    decided_reason) or None if no command can safely be produced --
-    callers must never guess a target when this returns None.
-    """
-    if action == "TERMINATE_PROCESS":
-        # ActiveResponseAction (vendor/eyedetect/src/alerting/active_response.py)
-        # never carries start_time_ticks -- the Linux agent's gate requires
-        # it to prevent PID-reuse, so this always fails closed rather than
-        # ever guessing a start time. Fixing this requires an upstream
-        # schema change, not a workaround here.
-        return None
-    if action == "ISOLATE_HOST":
-        return "ISOLATE_HOST", {}, "direct mapping"
-    if action == "BLOCK_FIREWALL_IP":
-        # Locked decision: no 8th action. Coarser than per-IP blocking, but
-        # stays within the closed, security-reviewed action set.
-        return (
-            "ISOLATE_HOST",
-            {},
-            "BLOCK_FIREWALL_IP has no equivalent action; downgraded to ISOLATE_HOST",
+def expire_stale_response_actions(conn: sqlite3.Connection) -> None:
+    """Flips PENDING response_actions older than _RESPONSE_ACTION_TTL to
+    EXPIRED. Must run inside the caller's already-open transaction. Cheap
+    and safe to call on every read of the queue -- there is no background
+    scheduler in Manager, so this is how "ANY -> EXPIRED" gets enforced for
+    the staging table."""
+    cutoff = (datetime.now(timezone.utc) - _RESPONSE_ACTION_TTL).isoformat()
+    rows = conn.execute(
+        "SELECT response_id FROM response_actions WHERE lifecycle_state = 'PENDING' "
+        "AND created_at <= ?",
+        (cutoff,),
+    ).fetchall()
+    for row in rows:
+        conn.execute(
+            "UPDATE response_actions SET lifecycle_state = 'EXPIRED', decided_reason = ? "
+            "WHERE response_id = ? AND lifecycle_state = 'PENDING'",
+            ("no analyst decision within the authorization window", row["response_id"]),
         )
-    return None
 
 
 def on_alert_created(conn: sqlite3.Connection, alert: Any) -> None:

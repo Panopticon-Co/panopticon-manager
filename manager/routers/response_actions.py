@@ -18,7 +18,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from manager import db
 from manager.auth import enroll_analyst, require_analyst_token
-from manager.detection.response import authorize_response_action, reject_response_action
+from manager.detection.response import (
+    authorize_response_action,
+    expire_stale_response_actions,
+    reject_response_action,
+)
 
 router = APIRouter()
 
@@ -80,6 +84,13 @@ async def list_response_actions(
 ) -> dict:
     require_analyst_token(authorization)
     conn = db.connect()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        expire_stale_response_actions(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     if state is not None:
         rows = conn.execute(
             f"SELECT {', '.join(_COLUMNS)} FROM response_actions "
@@ -97,11 +108,12 @@ async def list_response_actions(
 async def authorize(response_id: str, authorization: str | None = Header(default=None)) -> dict:
     analyst_id = require_analyst_token(authorization)
     conn = db.connect()
-    row = conn.execute(_SELECT_PENDING, (response_id,)).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="no pending response action with that id")
     conn.execute("BEGIN IMMEDIATE")
     try:
+        expire_stale_response_actions(conn)
+        row = conn.execute(_SELECT_PENDING, (response_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="no pending response action with that id")
         authorize_response_action(conn, response_id, actor=f"analyst:{analyst_id}")
         conn.commit()
     except Exception:
@@ -116,11 +128,12 @@ async def reject(
 ) -> dict:
     analyst_id = require_analyst_token(authorization)
     conn = db.connect()
-    row = conn.execute(_SELECT_PENDING, (response_id,)).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="no pending response action with that id")
     conn.execute("BEGIN IMMEDIATE")
     try:
+        expire_stale_response_actions(conn)
+        row = conn.execute(_SELECT_PENDING, (response_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="no pending response action with that id")
         reject_response_action(
             conn, response_id, actor=f"analyst:{analyst_id}", reason=request.reason
         )
