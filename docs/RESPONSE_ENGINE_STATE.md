@@ -1,6 +1,15 @@
 # Response Engine — implementation state / handoff
 
-Last updated: 2026-09-13, after a sixth pass that (1) wired the
+Last updated: 2026-09-13, after a seventh pass that built a true end-to-end
+vertical-slice test (real detector -> real Alert -> Response Engine ->
+authorization -> dispatch -> execution result -> audit) and, in the process,
+found and documented a real, previously-unrecorded gap: eyedetect's
+active-response vocabulary can never produce `COLLECT_PROCESS_INFO`/
+`COLLECT_NETWORK_CONNECTIONS`, and `ActiveResponseAction` has no
+`target_start_time_ticks` field at all, so no real detection can ever
+produce a `KILL_PROCESS` command today regardless of the `CORR-003` bump
+blocker — see "NEW this pass (seventh)" below. Built on top of a sixth pass
+that (1) wired the
 panopticon-contracts golden fixtures into all four implementer repos'
 real test suites (verified green on actual GitHub Actions CI in every
 case, not just local pytest/ctest), (2) found and fixed two real contract
@@ -371,6 +380,80 @@ reasoning from that repository's side.
   `test_duplicate_accept_is_idempotent`, and
   `test_late_accept_after_terminal_result_does_not_revert_state`.
 
+**NEW this pass (seventh): Priority 1 of the post-integration adversarial
+directive (true end-to-end vertical slice) — done, with a real, previously
+undocumented gap found and recorded rather than papered over.**
+
+- `tests/test_e2e_response_pipeline.py` (new, 6 tests, all passing against
+  the real Manager app via `TestClient` plus a real, unmodified
+  `DetectionRun`/`AlertSink` instance) proves the full
+  `Detection Engine -> Alert -> Response Engine -> authorization -> typed
+  command -> dispatch -> ACCEPTED -> execution result -> lifecycle -> audit`
+  chain end-to-end:
+  - `test_isolate_host_from_real_detector_requires_analyst_approval_then_succeeds`
+    feeds five real `file_create` events through the genuine, unmodified
+    `ThresholdEngine` default rule (`DET-FREQ-001`, deliberately independent
+    of the `vendor/eyedetect` bump blocked by the `CORR-003` regression — see
+    "Known blockers" below), gets a real `ISOLATE_HOST`-recommending `Alert`,
+    proves an unauthenticated and a forged-token authorization attempt are
+    both rejected (401) with the response action still `PENDING`, then has a
+    real enrolled analyst authorize it and drives it through
+    poll/accept/result to `SUCCEEDED`, asserting the exact
+    `command_audit` event sequence (`created`, `dispatched`, `accepted`,
+    `result_received`).
+  - `test_isolate_host_command_cannot_be_hijacked_by_a_different_agent` proves
+    a second, legitimately enrolled agent can neither poll, accept, nor
+    submit a result for another host's response-engine-issued command (empty
+    poll, 422/422), using a real detector-issued command rather than a
+    hand-crafted `/api/v1/commands` POST.
+  - `test_safe_collection_auto_dispatches_without_analyst_action_and_succeeds`
+    proves the AUTO_SAFE (`COLLECT_PROCESS_INFO`) path end-to-end — dispatch,
+    accept, result, `SUCCEEDED`, and the same four-event audit trail — with
+    zero analyst action anywhere in the path.
+  - `test_kill_process_real_detector_recommendation_fails_closed_without_start_time`
+    and `test_result_correlation_id_mismatch_is_rejected` and
+    `test_raw_command_with_an_action_outside_the_closed_seven_is_rejected`
+    cover the remaining named negative paths not already exercised by
+    `tests/test_command_route.py` (expired command, wrong agent, replay,
+    duplicate result, and duplicate accept were already covered there and are
+    not repeated).
+- **Real, previously undocumented finding: eyedetect's active-response
+  vocabulary cannot reach two of the directive's named scenarios today, by
+  construction, not by bug.** Read directly from
+  `vendor/eyedetect/src/alerting/active_response.py`,
+  `vendor/eyedetect/src/pipeline_core.py`, and every rule YAML under
+  `vendor/eyedetect/rules/`:
+  - `ActiveResponseEngine.resolve_action` only ever emits
+    `TERMINATE_PROCESS`, `BLOCK_FIREWALL_IP`, or `ISOLATE_HOST`. No rule, no
+    code path anywhere in `vendor/eyedetect` ever recommends
+    `COLLECT_PROCESS_INFO` or `COLLECT_NETWORK_CONNECTIONS` — the two
+    actions `response_engine.policy.classify_tier` marks `AUTO_SAFE`. The
+    entire `AUTO_SAFE` branch of `manager/detection/response.py`'s
+    `on_alert_created` is therefore unreachable from genuine detector output
+    today; it is only exercised (here and in
+    `tests/test_response_engine.py::test_on_alert_created_auto_safe_action_is_enqueued_immediately`)
+    by monkeypatching `translate_recommendation` at the same boundary.
+  - `ActiveResponseAction` (the dataclass `resolve_action` returns) has no
+    `target_start_time_ticks` field at all — it was never added when Windows
+    `start_time_ticks` was threaded through Manager/agents this session. That
+    means `response_engine.recommendation.translate_recommendation`'s
+    PID-reuse-safety gate can **never** be satisfied by real `TERMINATE_PROCESS`
+    output, so no real detection can ever produce a `KILL_PROCESS` command
+    today — every real Level-12/13 process-termination recommendation fails
+    closed (`REJECTED`, no command), proven directly against genuine
+    `ActiveResponseEngine.resolve_action` output by
+    `test_kill_process_real_detector_recommendation_fails_closed_without_start_time`.
+  - **This is intentionally not fixed here.** Both gaps live inside
+    `vendor/eyedetect`, and the operating directive for this pass explicitly
+    scopes eyedetect changes to the pre-existing `CORR-003` regression only.
+    Wiring a `target_start_time_ticks` value into `ActiveResponseAction`
+    would require the raw enriched event (with `process.start_time_ticks`,
+    landed this session on the Windows producer side) to reach
+    `ActiveResponseEngine.resolve_action`, which today only ever sees the
+    already-flattened `event` dict passed into rule evaluation — a real,
+    non-trivial detection-engine change, not a one-line fix. Recorded here as
+    a concrete, source-verified follow-up rather than silently declared done.
+
 ## Not yet done — genuinely missing, not fabricated as complete
 
 0. **RESOLVED this pass.** Item 2 below (`TERMINATE_PROCESS -> KILL_PROCESS`
@@ -523,13 +606,19 @@ reasoning from that repository's side.
    `ANALYST_APPROVAL` with the correct `{pid, start_time_ticks}` target, and
    that authorizing it dispatches through the same
    `authorize_response_action` path already covered by
-   `test_authorize_response_action_creates_a_dispatchable_command`. **Not yet
-   done**: a true end-to-end test that starts from a raw process-creation
-   telemetry event ingested through the full pipeline (worker -> rule match
-   -> `Alert` -> `on_alert_created`) rather than a hand-built `_Alert`/
-   `active_response` dict — blocked on the `vendor/eyedetect` bump (see
-   "Known blockers"), since that's what would let a real `Level >= 12` rule
-   match produce the recommendation in the first place.
+   `test_authorize_response_action_creates_a_dispatchable_command`.
+   **RESOLVED this (seventh) pass** for the reachable case:
+   `tests/test_e2e_response_pipeline.py` starts from raw `file_create` events
+   run through the real, unmodified `DetectionRun`/`ThresholdEngine`
+   (`DET-FREQ-001`, independent of the blocked `vendor/eyedetect` bump) to a
+   real `ISOLATE_HOST`-recommending `Alert`, through `on_alert_created`,
+   analyst authorization, dispatch, accept, and result. A true
+   `KILL_PROCESS`-specific version of this (a raw event producing a real
+   `Level >= 12` `TERMINATE_PROCESS` recommendation with a valid
+   `target_start_time_ticks`) remains genuinely impossible today regardless
+   of the `vendor/eyedetect` bump — see the "seventh pass" note above:
+   `ActiveResponseAction` has no `target_start_time_ticks` field at all, a
+   separate, deeper gap than `CORR-003`.
 5. **RESOLVED this pass.** Windows agent response support landed at
    `panopticon-agent@e4f2b0c` — see item 3 above for details and caveats.
 6. Investigate and fix the `CORR-003`/Gate-B regression blocking the
