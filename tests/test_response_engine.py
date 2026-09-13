@@ -89,7 +89,8 @@ def test_classify_tier_matches_locked_decisions() -> None:
 
 
 def test_translate_recommendation_terminate_process_fails_closed() -> None:
-    # ActiveResponseAction never carries start_time_ticks -- must never guess.
+    # Without target_start_time_ticks (e.g. an older agent build, or an event
+    # that never carried process.start_time_ticks) this must never guess.
     assert response.translate_recommendation("TERMINATE_PROCESS", {"target_pid": 123}) is None
 
 
@@ -138,6 +139,29 @@ def test_on_alert_created_terminate_process_is_rejected_with_no_command() -> Non
     row = _response_row(conn, _response_id_for_alert(conn, "ALT-3"))
     assert row["lifecycle_state"] == "REJECTED"
     assert row["command_id"] is None
+
+
+def test_on_alert_created_terminate_process_with_start_time_stages_kill_process_pending() -> None:
+    # Once the detection engine can prove a PID-reuse-safe start time
+    # (panopticon-response-engine ADR 002), TERMINATE_PROCESS must translate
+    # into a real, staged KILL_PROCESS response_actions row -- still PENDING
+    # analyst approval, never auto-enqueued, since KILL_PROCESS is hard-coded
+    # ANALYST_APPROVAL regardless of how the target was resolved.
+    conn = _conn()
+    _enroll_agent(conn)
+    _insert_bare_alert(conn, "ALT-3B")
+    active_response = {
+        "action": "TERMINATE_PROCESS",
+        "target_pid": 555,
+        "target_start_time_ticks": 987654,
+    }
+    response.on_alert_created(conn, _Alert(alert_id="ALT-3B", active_response=active_response))
+    row = _response_row(conn, _response_id_for_alert(conn, "ALT-3B"))
+    assert row["action"] == "KILL_PROCESS"
+    assert row["tier"] == "ANALYST_APPROVAL"
+    assert row["lifecycle_state"] == "PENDING"
+    assert row["command_id"] is None
+    assert json.loads(row["target_json"]) == {"pid": 555, "start_time_ticks": 987654}
 
 
 def test_on_alert_created_auto_safe_action_is_enqueued_immediately(monkeypatch) -> None:

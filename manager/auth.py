@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import sqlite3
 
 from fastapi import HTTPException
 
@@ -18,6 +19,18 @@ def _digest(token: str) -> str:
 
 
 def enroll(agent_id: str, host_id: str, bootstrap_token: str) -> str:
+    """Provisions a brand-new agent_id only. ``INSERT`` (not ``INSERT OR
+    REPLACE``) against ``agent_id``'s PRIMARY KEY deliberately rejects
+    re-enrolling an agent_id that already has any row here -- live or
+    revoked. The shared PANOPTICON_ENROLLMENT_TOKEN bootstrap secret is
+    necessarily fleet-wide, so a version of this function that silently
+    overwrote an existing agent_id's host_id/token_digest would let anyone
+    holding that one shared secret hijack a specific, already-trusted
+    agent's identity (rebinding it to an attacker-chosen host_id and minting
+    themselves a fresh bearer token for it) with no audit trail
+    distinguishing that from a first-time enrollment. There is currently no
+    revoke-then-re-enroll flow; that is a separate, not-yet-built feature,
+    not a reason to weaken this check."""
     expected = os.environ.get("PANOPTICON_ENROLLMENT_TOKEN")
     if not expected or not hmac.compare_digest(bootstrap_token, expected):
         raise HTTPException(status_code=401, detail="invalid enrollment credential")
@@ -26,12 +39,15 @@ def enroll(agent_id: str, host_id: str, bootstrap_token: str) -> str:
     conn.execute("BEGIN IMMEDIATE")
     try:
         conn.execute(
-            "INSERT OR REPLACE INTO enrolled_agents "
+            "INSERT INTO enrolled_agents "
             "(agent_id, host_id, token_digest, enrolled_at, revoked_at) "
             "VALUES (?, ?, ?, ?, NULL)",
             (agent_id, host_id, _digest(token), iso_now()),
         )
         conn.commit()
+    except sqlite3.IntegrityError as exc:
+        conn.rollback()
+        raise HTTPException(status_code=409, detail="agent_id is already enrolled") from exc
     except Exception:
         conn.rollback()
         raise

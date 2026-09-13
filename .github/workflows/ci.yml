@@ -27,6 +27,15 @@ jobs:
       - name: Move panopticon-agent to sibling path
         run: mv _panopticon-agent-checkout ../panopticon-agent
 
+      - name: Checkout panopticon-contracts (for response contract tests)
+        uses: actions/checkout@v4
+        with:
+          repository: Panopticon-Co/panopticon-contracts
+          path: _panopticon-contracts-checkout
+
+      - name: Move panopticon-contracts to sibling path
+        run: mv _panopticon-contracts-checkout ../panopticon-contracts
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
