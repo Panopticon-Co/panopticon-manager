@@ -1,6 +1,9 @@
 # Response Engine — implementation state / handoff
 
-Last updated: 2026-09-13, after a fourth pass that threaded
+Last updated: 2026-09-13, after a fifth pass that created
+[`Panopticon-Co/panopticon-contracts`](https://github.com/Panopticon-Co/panopticon-contracts)
+(canonical cross-repo wire contract docs, JSON Schema, and golden fixtures;
+see "NEW this pass" below), on top of a fourth pass that threaded
 `TERMINATE_PROCESS -> KILL_PROCESS` start-time data across five repos
 (response-engine ADR, schema, both agents' producer/consumer sides,
 detection engine, and Manager) and landed Windows agent response support
@@ -10,6 +13,66 @@ so a future session (or a compacted context) can reconstruct exactly what is
 real, what is verified, and what is next, without re-deriving it from
 scratch. Re-verify against the actual repos before trusting anything here as
 still current — treat this as a snapshot, not a source of truth.
+
+**NEW this pass: `panopticon-contracts` created.** Audited the actual wire
+behavior across `panopticon-response-engine`, `panopticon-manager`,
+`panopticon-linux-agent`, and `panopticon-agent` (not their docs) and
+published a new, separate repository —
+[`Panopticon-Co/panopticon-contracts`](https://github.com/Panopticon-Co/panopticon-contracts) —
+as the canonical, versioned home for the cross-repo `Command`/`CommandResult`
+wire contract, its JSON Schema, and deterministic golden fixtures. It is
+**not** a microservice or a new runtime dependency: no repo imports it at
+build/run time yet (see "Not yet done" below). Concretely it contains:
+
+- `docs/CONTRACT.md` — the reconciled wire contract, including two
+  previously-undocumented facts found during the audit: (1) the wire
+  `Command` envelope Manager actually sends has `host_id`/`schema_version`
+  injected at dispatch time, fields `response_engine.contract.Command`'s own
+  Pydantic model does not declare; (2) `panopticon-linux-agent`'s 8-value
+  local `receipt_code` enum collapses onto `CommandResult.outcome`'s 3-value
+  wire vocabulary (`succeeded`/`failed`/`rejected`) via a specific mapping
+  previously discoverable only by reading `src/command.cpp`.
+- `docs/VERSIONING.md`, `docs/COMPATIBILITY.md`, `docs/SECURITY.md` (15 named
+  adversarial invariants, each tied to a fixture), and
+  `docs/adr/0001-panopticon-contracts.md`.
+- `schema/command.schema.json` / `schema/command_result.schema.json` — JSON
+  Schema (draft 2020-12), including per-action target-shape `if/then` rules
+  and one explicitly documented schema-vs-implementation gap (JSON Schema's
+  `date-time` format cannot express "UTC offset only," which both native
+  agents enforce in code, not schema).
+- `fixtures/` — one valid command per closed action, 9 adversarial/invalid
+  command fixtures (expired, malformed JSON, missing field, unknown action,
+  wrong-typed target, wrong target shape for the action, smuggled `shell`
+  field, non-UTC timestamp, oversized `correlation_id`), plus 3 narrative
+  scenario fixtures for replay/cross-agent/correlation-mismatch that a static
+  schema can't express alone, the full 6-entry rejected-outcome vocabulary,
+  and lifecycle transition fixtures (valid/invalid/expiry/cancellation/
+  duplicate-operation).
+- `scripts/validate_fixtures.py` — validates every fixture against schema
+  (verified locally: all pass) and includes a `--grep-repos` mode searching
+  for banned execution patterns (`system(`, `popen(`, `exec*`, shell
+  invocations, `EXECUTE_COMMAND`). **Actually run** against
+  `panopticon-response-engine`, `panopticon-manager`, `panopticon-linux-agent`,
+  `panopticon-agent`, and `panopticon-detection-engine`'s real response-path
+  source (excluding vendored/venv trees and the two known negative-test hits
+  that assert `EXECUTE_COMMAND` is rejected): **zero violations found.**
+- `.github/workflows/ci.yml` — confirmed green on a real GitHub Actions run
+  (`gh run list`, run id `34757871084`, `success`, 11s) immediately after the
+  initial push, not just locally.
+
+**Not yet done (explicitly out of scope for this pass, tracked here so it
+isn't lost):** none of `panopticon-manager`, `panopticon-linux-agent`, or
+`panopticon-agent` has been wired to load `panopticon-contracts`' fixture
+files into its own test suite yet (`docs/COMPATIBILITY.md`'s "Next step"
+section in the new repo records the plan: submodule or vendored copy,
+whichever fits each repo's existing test infra with least new machinery).
+The Windows agent's `receipt_code`-equivalent collapse mapping was not
+independently re-read field-by-field against the Linux mapping this pass —
+recorded as a known gap in the new repo's `docs/COMPATIBILITY.md` rather than
+assumed identical. `panopticon-agent`'s own Schema 0.4 producer change to
+emit live `process.start_time_ticks` telemetry (unblocked since the Windows
+agent response-support merge landed) is also still outstanding — see item
+3/5 below, unchanged from the previous pass.
 
 **Resolved**: `gh pr create` succeeded on retry —
 [panopticon-manager#4](https://github.com/Panopticon-Co/panopticon-manager/pull/4)
