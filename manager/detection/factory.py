@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import manager.vendor_path  # noqa: F401  (sys.path side effect, must precede src.* imports)
+from manager.detection import response
 from manager.detection.store import insert_alert
 from src.cloud.cloud_engine import CloudThreatEngine
 from src.correlation.correlation_engine import CorrelationEngine
@@ -50,8 +51,13 @@ class AlertSink:
         self.agent_id: str | None = None
 
     def emit(self, alert: Any) -> None:
-        insert_alert(self._conn, alert, agent_id=self.agent_id)
+        inserted = insert_alert(self._conn, alert, agent_id=self.agent_id)
         self._writer.write(alert)
+        if inserted:
+            # Only for a genuinely new alert row -- a replayed/crash-recovered
+            # duplicate (insert_alert returns False) must never produce a
+            # second response_actions row for the same alert_id.
+            response.on_alert_created(self._conn, alert)
 
 
 def build_detection_run(
