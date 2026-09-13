@@ -3,8 +3,9 @@
 Last updated: 2026-09-13, after a fourth pass that threaded
 `TERMINATE_PROCESS -> KILL_PROCESS` start-time data across five repos
 (response-engine ADR, schema, both agents' producer/consumer sides,
-detection engine, and Manager) and launched a background implementation
-pass for Windows agent response support. This document exists
+detection engine, and Manager) and landed Windows agent response support
+(`panopticon-agent@e4f2b0c`, all 7 closed actions, merged and independently
+re-verified after a background implementation pass). This document exists
 so a future session (or a compacted context) can reconstruct exactly what is
 real, what is verified, and what is next, without re-deriving it from
 scratch. Re-verify against the actual repos before trusting anything here as
@@ -253,16 +254,55 @@ reasoning from that repository's side.
    closed when it is not. This is a correlation-engine change, not a
    Response Engine change, and touches a security-critical kill path — it
    needs its own careful, reviewed pass, not a rushed addition here.
-3. **The Windows agent (`panopticon-agent`, "Officer") implements no
-   response/command path at all** — confirmed telemetry-only by grep across
-   the entire repo for command-polling, `KILL_PROCESS`/`ISOLATE_HOST`
-   handling, or any HTTP client beyond telemetry upload. The Response
-   Engine's Manager-side design is already OS-agnostic (it just addresses
-   commands by `agent_id`), so nothing here blocks a Windows implementation
-   — but the implementation itself (poll loop, process termination via the
-   Windows API, host isolation via WFP/Windows Firewall, a Windows-side
-   equivalent of the Linux isolation helper's privilege separation) is a
-   substantial, standalone engineering effort not started in this pass.
+3. **RESOLVED this pass.** `panopticon-agent` @ `e4f2b0c` implements all 7
+   closed actions natively (Win32/WFP), mirroring `panopticon-linux-agent`'s
+   poll -> gate -> accept -> execute -> result control flow exactly. Opt-in
+   via `--enable-response` (off by default; a bare telemetry deployment is
+   byte-identical to before this pass). See `panopticon-agent/RESPONSE.md`
+   for the full design. Key points for a reviewer:
+   - `KILL_PROCESS`/`COLLECT_PROCESS_INFO` re-observe via `GetProcessTimes`
+     and compare the creation-time tuple against the command's
+     `start_time_ticks` before acting (the Windows side of the PID-reuse
+     defense item 0 above threads data for) — re-checked once more on the
+     freshly reopened `PROCESS_TERMINATE` handle immediately before
+     `TerminateProcess`, narrowing (not eliminating — no atomic Win32
+     primitive exists for this) the reopen-to-terminate TOCTOU window.
+   - `ISOLATE_HOST`/`RELEASE_HOST_ISOLATION` use WFP
+     (`FwpmEngineOpen0`/`FwpmFilterAdd0`) with a default-block sublayer and a
+     single permit filter scoped to the configured Manager address — no
+     SSH/RDP break-glass, no general ESTABLISHED/RELATED bypass, matching
+     the Linux isolation ADR's invariant.
+   - **Architectural decisions flagged for review** (all in `RESPONSE.md`):
+     no separate privileged-helper process (unlike Linux's AF_UNIX-split
+     helper — isolation runs in the already-elevated `officer-agent.exe`);
+     response only starts if a telemetry collector already started (an
+     integration-point artifact, not a security requirement); response
+     reuses the existing machine-GUID-derived telemetry identity for
+     enrollment rather than an independent identity; evidence for
+     `COLLECT_NETWORK_CONNECTIONS`/`COLLECT_FILE`/`QUARANTINE_FILE` goes out
+     via the existing stdout+Uploader telemetry path, since Manager has no
+     dedicated evidence-ingestion endpoint.
+   - **ENVIRONMENT-BLOCKED, not claimed as working**: this session's Windows
+     environment has no elevation available (`BUILTIN\Administrators` is
+     deny-only, no UAC) — live ETW/Sysmon start (a pre-existing limitation,
+     confirmed unrelated to this pass), live enrollment/poll/accept/result
+     HTTP round-trips against a real Manager, live `TerminateProcess`
+     against a genuinely protected target, and live WFP filter *enforcement*
+     against a real non-loopback adapter were never exercised — only
+     unit-tested in isolation (18 assertions, `officer-response-tests`).
+     Matches `panopticon-linux-agent`'s own ADR-004 de-risking-spike caveat
+     for the equivalent Linux gap.
+   - Verified in this environment: full MSVC/Ninja/vcpkg build from a clean
+     merge to `main`, `ctest --test-dir build-officer-x64` — **9/9 passed**
+     (5 pre-existing suites unchanged + new `officer-response-tests`),
+     independently re-verified (not just trusted from the implementing
+     pass's own report).
+   - **Still outstanding**: `panopticon-agent`'s own Schema 0.4 producer
+     change to emit `process.start_time_ticks` in telemetry (item 0 above)
+     — deliberately deferred during this pass to avoid a file-level
+     collision with the concurrent response-engine implementation; Windows-
+     originated detections still safely fail closed for `KILL_PROCESS`
+     translation until this lands.
 4. **No isolation-helper crash-mid-operation test and no IPC fuzz test**
    exist in `panopticon-linux-agent` (confirmed by its own audit pass) —
    the ADR asserts fail-closed re-apply-on-restart behavior
@@ -317,8 +357,8 @@ reasoning from that repository's side.
    `active_response` dict — blocked on the `vendor/eyedetect` bump (see
    "Known blockers"), since that's what would let a real `Level >= 12` rule
    match produce the recommendation in the first place.
-5. Windows agent response support is underway as a separate background
-   implementation pass (see the next report from that work when it lands).
+5. **RESOLVED this pass.** Windows agent response support landed at
+   `panopticon-agent@e4f2b0c` — see item 3 above for details and caveats.
 6. Investigate and fix the `CORR-003`/Gate-B regression blocking the
    `vendor/eyedetect` bump (see "Known blockers"), then bump it and add the
    true end-to-end test described in item 4 above.
@@ -347,10 +387,15 @@ reasoning from that repository's side.
   to `panopticon-detection-engine` run standalone) still cannot produce a
   real `KILL_PROCESS` command from a live alert, even though every other
   link in the chain now works.
-- Item 3 (Windows agent) is a correctness-sensitive design decision in
-  progress, not "blocked" — a background implementation pass is underway;
-  see its own report when it lands. Real kernel-network/real-nftables
-  validation against a non-loopback interface (as opposed to the container/
-  namespace-level IPC and state-recovery coverage already added) remains
-  genuinely environment-dependent per directive §28 — that needs the VMware
-  environment a teammate is preparing separately.
+- Windows agent response support (item 3/5 above) is implemented and
+  merged, but real elevation-dependent behavior on both platforms — live
+  `TerminateProcess` against a genuinely protected target, live WFP/nftables
+  filter *enforcement* against a non-loopback adapter, live
+  enrollment/poll/accept/result HTTP round-trips against a real Manager —
+  remains genuinely environment-dependent per directive §28. This session's
+  Windows environment has no elevation (`Administrators` deny-only, no UAC);
+  neither the Linux nor Windows agent's isolation path can be enforcement-
+  tested outside a container/namespace or a real elevated host. That needs
+  the VMware environment a teammate is preparing separately — see the
+  "Remaining environment-validation checklist" this document should gain
+  once every implementable-without-VMware item is exhausted.
