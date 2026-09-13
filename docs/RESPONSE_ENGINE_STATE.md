@@ -732,6 +732,20 @@ undocumented gap found and recorded rather than papered over.**
   to `panopticon-detection-engine` run standalone) still cannot produce a
   real `KILL_PROCESS` command from a live alert, even though every other
   link in the chain now works.
+- **Reconfirmed during the Priority 7 final release audit (2026-09-13)**:
+  attempted the `vendor/eyedetect` bump to `b89ccbf` (current
+  `panopticon-detection-engine` main, which includes `b2a02fe`'s
+  `target_start_time_ticks` fix) again, independently of the prior
+  session's cherry-pick isolation noted above. Result is identical:
+  `test_certutil_chain_produces_three_alerts` and
+  `test_replay_produces_gate_a_and_b_alerts` both fail on `CORR-003`
+  going missing from the produced alert set; reverted to `3dc75d8`
+  immediately, confirmed all 134 tests green again, and left no dirty
+  submodule state. This is not a new regression -- it is the same
+  already-documented blocker, reconfirmed rather than newly discovered.
+  The bump remains unsafe until `panopticon-detection-engine`'s own
+  `CORR-003` regression is fixed upstream; per the driving directive,
+  `vendor/eyedetect` is not being modified here to work around it.
 - Windows agent response support (item 3/5 above) is implemented and
   merged, but real elevation-dependent behavior on both platforms — live
   `TerminateProcess` against a genuinely protected target, live WFP/nftables
