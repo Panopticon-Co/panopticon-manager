@@ -380,6 +380,23 @@ reasoning from that repository's side.
   `test_duplicate_accept_is_idempotent`, and
   `test_late_accept_after_terminal_result_does_not_revert_state`.
 
+**NEW this pass (ninth): Priority 3 (fuzz/robustness) — bounded deterministic
+hostile-input suite for Manager's command/result decoding.** No fuzzing
+library (e.g. hypothesis) is installed anywhere in this project; per the
+operating directive a deterministic suite was used instead.
+`tests/test_hostile_input_commands.py` (12 tests) proves
+`/api/v1/commands` and `/api/v1/agents/{id}/command-results` fail closed
+against: a non-JSON body, truncated JSON, a JSON array/scalar instead of an
+object, an empty body, null for every required field, wrong JSON types for
+every field, invalid UTF-8 (Starlette itself rejects this with 400, before
+FastAPI's pydantic validation ever runs -- also an acceptable fail-closed
+outcome, not a bug), a pathologically deeply-nested JSON value, and an
+arbitrary-precision (10**300) integer target value. Also confirms duplicate
+JSON keys resolve deterministically to the last occurrence (Python's `json`
+module's standard behavior) rather than creating any validate-one/read-
+another smuggling ambiguity. All pre-existing 122 tests plus these 12 pass
+(134 total).
+
 **NEW this pass (eighth): Priority 2 of the post-integration adversarial
 directive (active cross-repo adversarial security review) — one real,
 exploitable vulnerability found and fixed in `panopticon-manager`, fourteen
