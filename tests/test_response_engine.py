@@ -150,7 +150,11 @@ def test_on_alert_created_terminate_process_with_start_time_stages_kill_process_
     conn = _conn()
     _enroll_agent(conn)
     _insert_bare_alert(conn, "ALT-3B")
-    active_response = {"action": "TERMINATE_PROCESS", "target_pid": 555, "target_start_time_ticks": 987654}
+    active_response = {
+        "action": "TERMINATE_PROCESS",
+        "target_pid": 555,
+        "target_start_time_ticks": 987654,
+    }
     response.on_alert_created(conn, _Alert(alert_id="ALT-3B", active_response=active_response))
     row = _response_row(conn, _response_id_for_alert(conn, "ALT-3B"))
     assert row["action"] == "KILL_PROCESS"
