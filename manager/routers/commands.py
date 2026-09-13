@@ -29,6 +29,7 @@ __all__ = [
     "Action",
     "Command",
     "CommandResult",
+    "accept",
     "authorize_and_enqueue",
     "enqueue",
     "poll",
@@ -116,7 +117,7 @@ async def enqueue(command: Command, x_panopticon_command_token: str = Header(...
     return {"command_id": command.command_id, "queued": True}
 
 
-_OPEN_LIFECYCLE_STATES = ("PENDING", "AUTHORIZED", "DISPATCHED")
+_OPEN_LIFECYCLE_STATES = ("PENDING", "AUTHORIZED", "DISPATCHED", "ACCEPTED")
 
 
 def _expire_stale_commands(conn: sqlite3.Connection, now: str) -> None:
@@ -127,8 +128,10 @@ def _expire_stale_commands(conn: sqlite3.Connection, now: str) -> None:
     (poll, result submission) rather than via a separate scheduler, since
     Manager has no background-job infrastructure and none is justified for
     this. Must run inside the caller's already-open transaction."""
+    placeholders = ", ".join("?" for _ in _OPEN_LIFECYCLE_STATES)
     rows = conn.execute(
-        "SELECT command_id FROM commands WHERE lifecycle_state IN (?, ?, ?) AND expires_at <= ?",
+        f"SELECT command_id FROM commands WHERE lifecycle_state IN ({placeholders}) "
+        "AND expires_at <= ?",
         (*_OPEN_LIFECYCLE_STATES, now),
     ).fetchall()
     for row in rows:
@@ -166,6 +169,48 @@ async def poll(agent_id: str, authorization: str | None = Header(default=None)) 
     return {"commands": [json.loads(str(row["command_json"])) for row in rows]}
 
 
+@router.post("/api/v1/agents/{agent_id}/commands/{command_id}/accept")
+async def accept(
+    agent_id: str, command_id: str, authorization: str | None = Header(default=None)
+) -> dict:
+    """DISPATCHED -> ACCEPTED: the endpoint has received and validated the
+    command and is about to execute it, but has not yet finished. This is
+    optional acknowledgement, not a second incompatible protocol -- an agent
+    that never calls this (e.g. one that only implements the original
+    poll/result exchange) can still submit a result directly from
+    DISPATCHED; submit_result() below accepts a result from either DISPATCHED
+    or ACCEPTED. Idempotent: accepting an already-ACCEPTED command, or one
+    that has already reached a terminal state (raced with expiry, or a
+    result already landed), is a no-op success rather than an error, so a
+    retrying agent never gets stuck on a 4xx it can't resolve."""
+    require_agent_token(agent_id, authorization)
+    conn = db.connect()
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        _expire_stale_commands(conn, now)
+        command = conn.execute(
+            "SELECT agent_id, lifecycle_state FROM commands WHERE command_id = ?",
+            (command_id,),
+        ).fetchone()
+        if command is None or str(command["agent_id"]) != agent_id:
+            raise HTTPException(status_code=422, detail="command does not belong to agent")
+        if command["lifecycle_state"] == "DISPATCHED":
+            conn.execute(
+                "UPDATE commands SET lifecycle_state = 'ACCEPTED' WHERE command_id = ?",
+                (command_id,),
+            )
+            _audit(conn, command_id, "accepted", f"agent:{agent_id}")
+        conn.commit()
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    return {"command_id": command_id, "accepted": True}
+
+
 @router.post("/api/v1/agents/{agent_id}/command-results")
 async def submit_result(
     agent_id: str, result: CommandResult, authorization: str | None = Header(default=None)
@@ -192,14 +237,18 @@ async def submit_result(
             and result.correlation_id != queued.get("correlation_id")
         ):
             raise HTTPException(status_code=422, detail="result correlation does not match command")
-        # A command accepts exactly one outcome. Once lifecycle_state has left
-        # DISPATCHED (a first result already landed, or the sweep above just
-        # expired it), a second, differently-result_id'd submission must never
-        # flip the state again -- that would let a duplicate or replayed
-        # result overwrite a real terminal outcome. The submission is still
-        # accepted/audited (so a misbehaving or retrying agent gets a normal
-        # 200, not an error it might retry-loop on) but never mutates state.
-        if command["lifecycle_state"] != "DISPATCHED":
+        # A command accepts exactly one outcome. A result is legal from either
+        # DISPATCHED (no explicit accept/ack call) or ACCEPTED (the agent
+        # acknowledged receipt first via accept() above) -- both represent
+        # "the agent has this command and hasn't reported an outcome yet".
+        # Once lifecycle_state has left both (a first result already landed,
+        # or the sweep above just expired it), a second, differently-
+        # result_id'd submission must never flip the state again -- that
+        # would let a duplicate or replayed result overwrite a real terminal
+        # outcome. The submission is still accepted/audited (so a
+        # misbehaving or retrying agent gets a normal 200, not an error it
+        # might retry-loop on) but never mutates state.
+        if command["lifecycle_state"] not in ("DISPATCHED", "ACCEPTED"):
             _audit(
                 conn,
                 result.command_id,
