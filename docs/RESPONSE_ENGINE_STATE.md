@@ -380,6 +380,72 @@ reasoning from that repository's side.
   `test_duplicate_accept_is_idempotent`, and
   `test_late_accept_after_terminal_result_does_not_revert_state`.
 
+**NEW this pass (eighth): Priority 2 of the post-integration adversarial
+directive (active cross-repo adversarial security review) — one real,
+exploitable vulnerability found and fixed in `panopticon-manager`, fourteen
+new adversarial regression tests added, everything else in the attack model
+verified safe by actually attacking it rather than reading source.**
+
+- **Fixed: agent-identity takeover via the shared enrollment bootstrap
+  secret.** `manager.auth.enroll()` used `INSERT OR REPLACE` against
+  `enrolled_agents`, so re-POSTing `/api/v1/agents/enroll` for an
+  *already-enrolled* `agent_id` silently overwrote its `host_id` and minted
+  a fresh bearer token, invalidating the legitimate agent's own token with
+  no audit trail distinguishing this from first-time provisioning. Since
+  `PANOPTICON_ENROLLMENT_TOKEN` is necessarily one shared, fleet-wide
+  secret, anyone holding it (not just the operator of a specific endpoint)
+  could hijack any already-trusted agent's identity and rebind it to a
+  host_id of their choosing. Fixed by changing to a plain `INSERT` and
+  catching the resulting `sqlite3.IntegrityError` into a 409 (the same
+  pattern `authorize_and_enqueue` already uses for duplicate `command_id`),
+  so re-enrolling an existing `agent_id` is rejected outright and the
+  original binding/token is untouched. There is still no revoke-then-
+  re-enroll flow — that is a separate, not-yet-built feature, not a reason
+  this fix was weakened. See
+  `test_re_enrolling_an_existing_agent_id_is_rejected_not_silently_overwritten`
+  in `tests/test_adversarial_security.py`.
+- **Verified safe by active attack, not just source reading** (all in
+  `tests/test_adversarial_security.py` unless noted):
+  - Agent bearer tokens cannot authenticate as an analyst, and analyst
+    tokens cannot authenticate as an agent — `enrolled_agents` and
+    `analyst_credentials` are genuinely separate identity spaces.
+  - The shared `system:command-token` (used only for the raw
+    `/api/v1/commands` POST) cannot be presented as a `Bearer` token to
+    authenticate as either an agent or an analyst.
+  - `response_id` is the sole authorization scope for
+    `/api/v1/response-actions/{id}/authorize` — a forged/guessed
+    `response_id` 404s, and authorizing one response_action never touches a
+    different, unrelated one's `lifecycle_state` or `command_id`.
+  - Revoking an agent's or analyst's credential (`revoked_at` set) takes
+    effect on the very next request, including result submission for a
+    command already in flight — no caching or grace window.
+  - Malformed/hostile `Authorization` headers (empty, `"Bearer"` with no
+    token, `Basic` scheme, a 10,000-character token) are all rejected
+    cheaply (a length check precedes any digest comparison).
+  - The wire `Command` contract's own PID-reuse gate (positive-integer
+    `start_time_ticks`, `extra="forbid"` on `target`) rejects a missing,
+    zero, or negative `start_time_ticks` and rejects a smuggled extra target
+    field (e.g. a `shell_command` key riding alongside a valid `pid`) at
+    validation time, independent of any specific caller.
+  - `accept()`/`submit_result()` against a fabricated `command_id` that was
+    never queued are both rejected (422), not silently accepted or crashing.
+  - A repository-wide banned-execution-pattern scan of `manager/`
+    (`os.system`, `subprocess`, `popen(`, `eval(`, `shell=True`) found no
+    matches — confirmed clean, not merely assumed.
+- **Not re-tested here** (already covered with adversarial-style tests
+  elsewhere and not repeated): wrong-agent poll/accept/result, command
+  replay via duplicate `command_id`, command/result expiry, duplicate-result
+  idempotency (`tests/test_command_route.py`); cross-agent hijack of a
+  response-engine-issued command, forged/wrong `correlation_id`, and the
+  closed seven-action enum against the raw endpoint
+  (`tests/test_e2e_response_pipeline.py`).
+- **Remaining Priority 2 scope, continuing next**: `panopticon-contracts`,
+  `panopticon-response-engine`, `panopticon-linux-agent`, and
+  `panopticon-agent` still need their own active-attack passes (this pass
+  covered `panopticon-manager` only); target/file-action path-traversal
+  security (COLLECT_FILE/QUARANTINE_FILE); Linux isolation-helper IPC/
+  privilege-boundary re-verification against the attack model above.
+
 **NEW this pass (seventh): Priority 1 of the post-integration adversarial
 directive (true end-to-end vertical slice) — done, with a real, previously
 undocumented gap found and recorded rather than papered over.**
