@@ -79,14 +79,25 @@ class CommandResult(BaseModel):
     correlation_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
-@router.post("/api/v1/commands")
-async def enqueue(command: Command, x_panopticon_command_token: str = Header(...)) -> dict:
-    expected = os.environ.get("PANOPTICON_COMMAND_TOKEN")
-    if not expected or not hmac.compare_digest(expected, x_panopticon_command_token):
-        raise HTTPException(status_code=401, detail="command authorization required")
+def authorize_and_enqueue(
+    conn, command: "Command", actor: str, alert_id: str | None = None
+) -> None:
+    """Shared path for both the raw POST /api/v1/commands endpoint and the
+    Response Engine (manager/detection/response.py) -- one place validates
+    the target agent, writes the commands row, and audits creation, so the
+    two callers can never drift into different behavior. Raises
+    HTTPException on any rejection; callers propagate it as-is.
+
+    Manages its own BEGIN IMMEDIATE/commit/rollback only when called
+    top-level (conn.in_transaction is False) -- e.g. the raw endpoint below,
+    or an analyst-authorize request. When called from inside an
+    already-open transaction (the automatic AUTO_SAFE path, invoked from
+    manager/detection/worker.py's per-event transaction), it just executes
+    as part of that ambient transaction and leaves commit/rollback to the
+    caller, since sqlite3 does not support nested transactions.
+    """
     if command.expires_at <= datetime.now(command.expires_at.tzinfo):
         raise HTTPException(status_code=422, detail="command expired")
-    conn = db.connect()
     enrolled = conn.execute(
         "SELECT host_id FROM enrolled_agents WHERE agent_id = ? AND revoked_at IS NULL",
         (command.agent_id,),
@@ -101,27 +112,41 @@ async def enqueue(command: Command, x_panopticon_command_token: str = Header(...
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
     )
-    conn.execute("BEGIN IMMEDIATE")
+    owns_transaction = not conn.in_transaction
+    if owns_transaction:
+        conn.execute("BEGIN IMMEDIATE")
     try:
         conn.execute(
-            "INSERT INTO commands (command_id, agent_id, command_json, created_at, expires_at) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO commands (command_id, agent_id, command_json, created_at, "
+            "expires_at, alert_id, lifecycle_state) VALUES (?, ?, ?, ?, ?, ?, 'AUTHORIZED')",
             (
                 command.command_id,
                 command.agent_id,
                 json.dumps(payload, separators=(",", ":")),
                 iso_now(),
                 command.expires_at.isoformat(),
+                alert_id,
             ),
         )
-        _audit(conn, command.command_id, "created", "system:command-token")
-        conn.commit()
+        _audit(conn, command.command_id, "created", actor)
+        if owns_transaction:
+            conn.commit()
     except sqlite3.IntegrityError:
-        conn.rollback()
+        if owns_transaction:
+            conn.rollback()
         raise HTTPException(status_code=409, detail="command_id already exists")
     except Exception:
-        conn.rollback()
+        if owns_transaction:
+            conn.rollback()
         raise
+
+
+@router.post("/api/v1/commands")
+async def enqueue(command: Command, x_panopticon_command_token: str = Header(...)) -> dict:
+    expected = os.environ.get("PANOPTICON_COMMAND_TOKEN")
+    if not expected or not hmac.compare_digest(expected, x_panopticon_command_token):
+        raise HTTPException(status_code=401, detail="command authorization required")
+    authorize_and_enqueue(db.connect(), command, "system:command-token")
     return {"command_id": command.command_id, "queued": True}
 
 
@@ -139,7 +164,8 @@ async def poll(agent_id: str, authorization: str | None = Header(default=None)) 
         ).fetchall()
         for row in rows:
             conn.execute(
-                "UPDATE commands SET delivered_at = ? WHERE command_id = ?",
+                "UPDATE commands SET delivered_at = ?, lifecycle_state = 'DISPATCHED' "
+                "WHERE command_id = ?",
                 (now, row["command_id"]),
             )
             _audit(conn, str(row["command_id"]), "dispatched", f"agent:{agent_id}")
@@ -168,12 +194,22 @@ async def submit_result(
     queued = json.loads(str(command["command_json"]))
     if result.correlation_id is not None and result.correlation_id != queued.get("correlation_id"):
         raise HTTPException(status_code=422, detail="result correlation does not match command")
-    conn.execute(
+    inserted = conn.execute(
         "INSERT OR IGNORE INTO command_results "
         "(result_id, command_id, agent_id, outcome, detail, received_at) "
         "VALUES (?, ?, ?, ?, ?, ?)",
         (result.result_id, result.command_id, agent_id, result.outcome, result.detail, iso_now()),
-    )
+    ).rowcount
+    if inserted:
+        final_state = {
+            "succeeded": "SUCCEEDED",
+            "failed": "FAILED",
+            "rejected": "REJECTED",
+        }[result.outcome]
+        conn.execute(
+            "UPDATE commands SET lifecycle_state = ? WHERE command_id = ?",
+            (final_state, result.command_id),
+        )
     _audit(conn, result.command_id, "result_received", f"agent:{agent_id}", result.outcome)
     conn.commit()
     return {"result_id": result.result_id, "accepted": True}

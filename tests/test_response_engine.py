@@ -1,0 +1,241 @@
+"""Unit tests for manager/detection/response.py against a bare in-memory
+sqlite3 connection (migrated schema, no FastAPI) -- these exercise the
+translation/tiering/lifecycle logic directly, independent of HTTP transport
+or the vendored detection engine. tests/test_response_actions_route.py covers
+the HTTP surface."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from datetime import datetime, timezone
+
+from manager import migrations
+from manager.detection import response
+
+
+class _Alert:
+    """Minimal stand-in for vendor/eyedetect's Alert dataclass: anything with
+    a to_dict() is accepted by on_alert_created."""
+
+    def __init__(self, **fields):
+        self._fields = fields
+
+    def to_dict(self) -> dict:
+        return self._fields
+
+
+def _conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    migrations.migrate(conn)
+    return conn
+
+
+def _enroll_agent(
+    conn: sqlite3.Connection, agent_id: str = "agent-1", host_id: str = "host-1"
+) -> None:
+    conn.execute(
+        "INSERT INTO enrolled_agents (agent_id, host_id, token_digest, enrolled_at, revoked_at) "
+        "VALUES (?, ?, 'digest', ?, NULL)",
+        (agent_id, host_id, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+
+def _insert_bare_alert(
+    conn: sqlite3.Connection, alert_id: str, agent_id: str | None = "agent-1"
+) -> None:
+    conn.execute(
+        "INSERT INTO alerts (alert_id, rule_id, agent_id, created_at, alert_json) "
+        "VALUES (?, 'rule-1', ?, ?, '{}')",
+        (alert_id, agent_id, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+
+def _response_id_for_alert(conn: sqlite3.Connection, alert_id: str) -> str:
+    row = conn.execute(
+        "SELECT response_id FROM response_actions WHERE alert_id = ?", (alert_id,)
+    ).fetchone()
+    return str(row["response_id"])
+
+
+def _response_row(conn: sqlite3.Connection, response_id: str) -> sqlite3.Row:
+    row = conn.execute(
+        "SELECT * FROM response_actions WHERE response_id = ?", (response_id,)
+    ).fetchone()
+    assert row is not None
+    return row
+
+
+def _command_row(conn: sqlite3.Connection, command_id: str) -> sqlite3.Row:
+    row = conn.execute("SELECT * FROM commands WHERE command_id = ?", (command_id,)).fetchone()
+    assert row is not None
+    return row
+
+
+def test_classify_tier_matches_locked_decisions() -> None:
+    assert response.classify_tier("KILL_PROCESS") == "ANALYST_APPROVAL"
+    assert response.classify_tier("ISOLATE_HOST") == "ANALYST_APPROVAL"
+    assert response.classify_tier("RELEASE_HOST_ISOLATION") == "ANALYST_APPROVAL"
+    assert response.classify_tier("COLLECT_PROCESS_INFO") == "AUTO_SAFE"
+    assert response.classify_tier("COLLECT_NETWORK_CONNECTIONS") == "AUTO_SAFE"
+    assert response.classify_tier("COLLECT_FILE") == "ANALYST_APPROVAL"
+    assert response.classify_tier("QUARANTINE_FILE") == "ANALYST_APPROVAL"
+    # Unknown actions must never default to auto-fire.
+    assert response.classify_tier("SOMETHING_UNKNOWN") == "ANALYST_APPROVAL"
+
+
+def test_translate_recommendation_terminate_process_fails_closed() -> None:
+    # ActiveResponseAction never carries start_time_ticks -- must never guess.
+    assert response.translate_recommendation("TERMINATE_PROCESS", {"target_pid": 123}) is None
+
+
+def test_translate_recommendation_isolate_host_is_a_direct_mapping() -> None:
+    mapped = response.translate_recommendation("ISOLATE_HOST", {})
+    assert mapped == ("ISOLATE_HOST", {}, "direct mapping")
+
+
+def test_translate_recommendation_block_firewall_ip_downgrades_to_isolate_host() -> None:
+    active_response = {"target_ip": "1.2.3.4"}
+    action, target, reason = response.translate_recommendation("BLOCK_FIREWALL_IP", active_response)
+    assert action == "ISOLATE_HOST"
+    assert target == {}
+    assert "downgraded" in reason
+
+
+def test_translate_recommendation_unknown_action_returns_none() -> None:
+    assert response.translate_recommendation("SOMETHING_ELSE", {}) is None
+
+
+def test_on_alert_created_with_no_active_response_produces_no_row() -> None:
+    conn = _conn()
+    response.on_alert_created(conn, _Alert(alert_id="ALT-1", active_response=None))
+    assert conn.execute("SELECT COUNT(*) AS c FROM response_actions").fetchone()["c"] == 0
+
+
+def test_on_alert_created_analyst_approval_action_stays_pending_with_no_command() -> None:
+    conn = _conn()
+    _enroll_agent(conn)
+    _insert_bare_alert(conn, "ALT-2")
+    alert = _Alert(alert_id="ALT-2", active_response={"action": "ISOLATE_HOST"})
+    response.on_alert_created(conn, alert)
+    row = _response_row(conn, _response_id_for_alert(conn, "ALT-2"))
+    assert row["action"] == "ISOLATE_HOST"
+    assert row["tier"] == "ANALYST_APPROVAL"
+    assert row["lifecycle_state"] == "PENDING"
+    assert row["command_id"] is None
+
+
+def test_on_alert_created_terminate_process_is_rejected_with_no_command() -> None:
+    conn = _conn()
+    _enroll_agent(conn)
+    _insert_bare_alert(conn, "ALT-3")
+    active_response = {"action": "TERMINATE_PROCESS", "target_pid": 555}
+    response.on_alert_created(conn, _Alert(alert_id="ALT-3", active_response=active_response))
+    row = _response_row(conn, _response_id_for_alert(conn, "ALT-3"))
+    assert row["lifecycle_state"] == "REJECTED"
+    assert row["command_id"] is None
+
+
+def test_on_alert_created_auto_safe_action_is_enqueued_immediately(monkeypatch) -> None:
+    conn = _conn()
+    _enroll_agent(conn)
+    _insert_bare_alert(conn, "ALT-4")
+    # eyedetect's real vocabulary (TERMINATE_PROCESS/ISOLATE_HOST/BLOCK_FIREWALL_IP)
+    # never maps onto an AUTO_SAFE command today -- exercise that branch directly
+    # against the closed action-to-tier table rather than waiting for eyedetect
+    # to grow a new recommendation type.
+    def _fake_translate(action, active_response):
+        return "COLLECT_PROCESS_INFO", {"pid": 1, "start_time_ticks": 2}, "test mapping"
+
+    monkeypatch.setattr(response, "translate_recommendation", _fake_translate)
+    alert = _Alert(alert_id="ALT-4", active_response={"action": "FAKE_ACTION"})
+    response.on_alert_created(conn, alert)
+    row = _response_row(conn, _response_id_for_alert(conn, "ALT-4"))
+    assert row["tier"] == "AUTO_SAFE"
+    assert row["lifecycle_state"] == "AUTHORIZED"
+    assert row["command_id"] is not None
+    command = _command_row(conn, row["command_id"])
+    assert json.loads(command["command_json"])["action"] == "COLLECT_PROCESS_INFO"
+    assert command["alert_id"] == "ALT-4"
+
+
+def test_on_alert_created_never_raises_on_internal_failure(monkeypatch) -> None:
+    conn = _conn()
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("simulated Response Engine bug")
+
+    monkeypatch.setattr(response, "translate_recommendation", _boom)
+    # Must not raise -- a Response Engine bug must never take detection down
+    # or roll back the alert that was already durably written.
+    alert = _Alert(alert_id="ALT-5", active_response={"action": "ISOLATE_HOST"})
+    response.on_alert_created(conn, alert)
+    assert conn.execute("SELECT COUNT(*) AS c FROM response_actions").fetchone()["c"] == 0
+
+
+def test_authorize_response_action_creates_a_dispatchable_command() -> None:
+    conn = _conn()
+    _enroll_agent(conn)
+    _insert_bare_alert(conn, "ALT-6")
+    alert = _Alert(alert_id="ALT-6", active_response={"action": "ISOLATE_HOST"})
+    response.on_alert_created(conn, alert)
+    response_id = _response_id_for_alert(conn, "ALT-6")
+    response.authorize_response_action(conn, response_id, actor="analyst:alice")
+    row = _response_row(conn, response_id)
+    assert row["lifecycle_state"] == "AUTHORIZED"
+    assert row["authorized_by"] == "analyst:alice"
+    assert row["command_id"] is not None
+    command = _command_row(conn, row["command_id"])
+    assert json.loads(command["command_json"])["action"] == "ISOLATE_HOST"
+    assert command["agent_id"] == "agent-1"
+    assert command["alert_id"] == "ALT-6"
+    assert command["lifecycle_state"] == "AUTHORIZED"
+
+
+def test_authorize_response_action_rejects_when_alert_has_no_agent() -> None:
+    conn = _conn()
+    _insert_bare_alert(conn, "ALT-7", agent_id=None)
+    alert = _Alert(alert_id="ALT-7", active_response={"action": "ISOLATE_HOST"})
+    response.on_alert_created(conn, alert)
+    response_id = _response_id_for_alert(conn, "ALT-7")
+    response.authorize_response_action(conn, response_id, actor="analyst:alice")
+    row = _response_row(conn, response_id)
+    assert row["lifecycle_state"] == "REJECTED"
+    assert row["command_id"] is None
+
+
+def test_authorize_response_action_is_a_no_op_when_not_pending() -> None:
+    conn = _conn()
+    _enroll_agent(conn)
+    _insert_bare_alert(conn, "ALT-8")
+    alert = _Alert(alert_id="ALT-8", active_response={"action": "ISOLATE_HOST"})
+    response.on_alert_created(conn, alert)
+    response_id = _response_id_for_alert(conn, "ALT-8")
+    response.reject_response_action(conn, response_id, actor="analyst:bob", reason="benign")
+    # Already REJECTED -- must not resurrect it into an AUTHORIZED command.
+    response.authorize_response_action(conn, response_id, actor="analyst:alice")
+    row = _response_row(conn, response_id)
+    assert row["lifecycle_state"] == "REJECTED"
+    assert row["command_id"] is None
+
+
+def test_reject_response_action_never_creates_a_command() -> None:
+    conn = _conn()
+    _enroll_agent(conn)
+    _insert_bare_alert(conn, "ALT-9")
+    alert = _Alert(alert_id="ALT-9", active_response={"action": "ISOLATE_HOST"})
+    response.on_alert_created(conn, alert)
+    response_id = _response_id_for_alert(conn, "ALT-9")
+    response.reject_response_action(
+        conn, response_id, actor="analyst:bob", reason="confirmed benign"
+    )
+    row = _response_row(conn, response_id)
+    assert row["lifecycle_state"] == "REJECTED"
+    assert row["command_id"] is None
+    assert row["authorized_by"] == "analyst:bob"
+    assert row["decided_reason"] == "confirmed benign"
+    assert conn.execute("SELECT COUNT(*) AS c FROM commands").fetchone()["c"] == 0

@@ -17,22 +17,29 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("PANOPTICON_RULES_DIR", str(FIXTURE_RULES_DIR))
     monkeypatch.setenv("PANOPTICON_ENROLLMENT_TOKEN", "test-bootstrap-token")
     monkeypatch.setenv("PANOPTICON_COMMAND_TOKEN", "test-command-token")
+    monkeypatch.setenv("PANOPTICON_ANALYST_ENROLLMENT_TOKEN", "test-analyst-bootstrap-token")
     # Reimport fresh so module-level state (db._db_path, thread-local conn) doesn't
     # leak between tests.
     import manager.app as app_module
     import manager.auth as auth_module
     import manager.db as db_module
+    import manager.detection.factory as factory_module
+    import manager.detection.response as response_module
     import manager.migrations as migrations_module
     import manager.routers.commands as commands_module
     import manager.routers.enrollment as enrollment_module
     import manager.routers.health as health_module
     import manager.routers.ingest as ingest_module
+    import manager.routers.response_actions as response_actions_module
 
     for mod in (
         health_module,
         ingest_module,
         enrollment_module,
         commands_module,
+        response_module,
+        response_actions_module,
+        factory_module,
         auth_module,
         migrations_module,
         db_module,

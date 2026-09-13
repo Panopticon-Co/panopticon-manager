@@ -146,6 +146,64 @@ def _migration_7(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX ix_command_audit_command ON command_audit (command_id, occurred_at)")
 
 
+def _migration_8(conn: sqlite3.Connection) -> None:
+    """Response Engine staging table: an alert's recommended response lives
+    here from creation through analyst authorization, distinct from the
+    ``commands`` row it produces once authorized. ``tier`` and
+    ``lifecycle_state`` are enforced at the Pydantic/app layer (see
+    manager/detection/response.py), matching this codebase's existing
+    convention of not using SQLite CHECK constraints for enums."""
+    conn.execute(
+        """
+        CREATE TABLE response_actions (
+            response_id TEXT PRIMARY KEY,
+            alert_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            tier TEXT NOT NULL,
+            lifecycle_state TEXT NOT NULL,
+            target_json TEXT NOT NULL,
+            command_id TEXT,
+            created_at TEXT NOT NULL,
+            authorized_at TEXT,
+            authorized_by TEXT,
+            decided_reason TEXT,
+            FOREIGN KEY(alert_id) REFERENCES alerts(alert_id),
+            FOREIGN KEY(command_id) REFERENCES commands(command_id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX ix_response_actions_state ON response_actions (lifecycle_state, created_at)"
+    )
+    conn.execute("CREATE INDEX ix_response_actions_alert ON response_actions (alert_id)")
+
+
+def _migration_9(conn: sqlite3.Connection) -> None:
+    """Links a dispatched command back to the alert/response_action that
+    authorized it, and gives commands their own lifecycle state distinct
+    from the raw delivered_at/command_results rows (see
+    manager/detection/response.py for the state machine)."""
+    conn.execute("ALTER TABLE commands ADD COLUMN alert_id TEXT")
+    conn.execute("ALTER TABLE commands ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'PENDING'")
+
+
+def _migration_10(conn: sqlite3.Connection) -> None:
+    """Analyst identities for the response-authorization path -- distinct
+    from agent bearer tokens (enrolled_agents) and the shared
+    command-creation token (PANOPTICON_COMMAND_TOKEN), so an authorization
+    finally carries a real per-caller identity into command_audit.actor."""
+    conn.execute(
+        """
+        CREATE TABLE analyst_credentials (
+            analyst_id TEXT PRIMARY KEY,
+            token_digest TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            revoked_at TEXT
+        )
+        """
+    )
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -154,6 +212,9 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_5,
     _migration_6,
     _migration_7,
+    _migration_8,
+    _migration_9,
+    _migration_10,
 ]
 
 

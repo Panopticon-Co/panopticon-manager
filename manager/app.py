@@ -14,7 +14,7 @@ from fastapi import FastAPI
 
 from manager import config, db, migrations
 from manager.detection.worker import DetectionWorker
-from manager.routers import commands, enrollment, health, ingest
+from manager.routers import commands, enrollment, health, ingest, response_actions
 
 
 @asynccontextmanager
@@ -41,3 +41,4 @@ app.include_router(health.router)
 app.include_router(ingest.router)
 app.include_router(enrollment.router)
 app.include_router(commands.router)
+app.include_router(response_actions.router)
