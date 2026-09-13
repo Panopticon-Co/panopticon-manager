@@ -1,11 +1,19 @@
 # Response Engine — implementation state / handoff
 
-Last updated: 2026-09-13, after a Manager-focused Response Engine audit and
-fix pass. This document exists so a future session (or a compacted context)
-can reconstruct exactly what is real, what is verified, and what is next,
-without re-deriving it from scratch. Re-verify against the actual repos
-before trusting anything here as still current — treat this as a snapshot,
-not a source of truth.
+Last updated: 2026-09-13, after a second Manager-focused pass that
+implemented the `ACCEPTED` lifecycle state. This document exists so a future
+session (or a compacted context) can reconstruct exactly what is real, what
+is verified, and what is next, without re-deriving it from scratch.
+Re-verify against the actual repos before trusting anything here as still
+current — treat this as a snapshot, not a source of truth.
+
+**Outstanding**: commits `ccc25d2`, `f777ff6`, `b1553b1` are pushed to
+`origin/feat/response-engine-extraction-and-fixes` in `panopticon-manager`
+but `gh pr create` has failed repeatedly with transient GitHub API 502/
+GraphQL errors (an external outage, not a local problem — `git push` itself
+succeeds every time). Open the PR manually or retry `gh pr create` once
+GitHub recovers:
+`https://github.com/Panopticon-Co/panopticon-manager/compare/main...feat/response-engine-extraction-and-fixes`
 
 ## Architectural decision
 
@@ -63,11 +71,23 @@ reasoning from that repository's side.
   writes a `commands` row (used by both the raw `POST /api/v1/commands`
   endpoint and the Response Engine); `poll()` and `submit_result()` are the
   agent-facing dispatch/result-reporting surface.
-- Test suite: `uv run pytest -q tests/` — **87 passed** in Manager (84
-  pre-existing + 3 added earlier this session; unchanged in count/behavior
-  after the package extraction). `panopticon-response-engine`'s own suite:
-  **39 passed** (`pytest -q` in that repo). `uv run ruff check .` — clean in
-  both repos.
+- `manager/routers/commands.py` also now exposes
+  `POST /api/v1/agents/{agent_id}/commands/{command_id}/accept`
+  (`DISPATCHED -> ACCEPTED`), an optional agent acknowledgement. A result is
+  legal from either `DISPATCHED` or `ACCEPTED`, so an agent that never calls
+  `accept()` keeps working unchanged — see "Not yet done" below, item 1 is
+  now resolved.
+- Test suite: `uv run pytest -q tests/` — **94 passed** in Manager (6 new
+  ACCEPTED-state tests added this pass in `tests/test_command_route.py`;
+  every pre-existing test still passes unchanged). This pass also fixed a
+  pre-existing bug surfaced by adding `ACCEPTED` to `_OPEN_LIFECYCLE_STATES`:
+  the expiry sweep's SQL had a hardcoded 3-placeholder `IN (?, ?, ?)` clause
+  that broke as soon as a 4th open state existed
+  (`sqlite3.ProgrammingError: Incorrect number of bindings supplied`) — now
+  built from `len(_OPEN_LIFECYCLE_STATES)`. `panopticon-response-engine`'s
+  own suite: **39 passed** (this pass's commit there only changed
+  `lifecycle.py`'s docstring, not any test-relevant code).
+  `uv run ruff check .` — clean in both repos.
 - CI: Manager's `.github/workflows/ci.yml` is unmodified — its existing
   `submodules: recursive` checkout and `pip install -r requirements.txt`
   step pick up the new submodule and its editable install automatically.
@@ -149,18 +169,31 @@ reasoning from that repository's side.
   Manager has no job infrastructure and none is justified yet. See
   `test_expired_command_transitions_to_expired_lifecycle_state` and
   `test_stale_pending_response_action_expires_and_cannot_be_authorized`.
+- **Added this pass**: `accept()` only ever moves a command out of
+  `DISPATCHED`; it is bound to the caller's own `agent_id` the same way
+  `poll()`/`submit_result()` are (422 if the command belongs to another
+  agent), swept by the same expiry check first, and is a no-op (200, not an
+  error) both when called twice and when called after a result has already
+  landed — a late or replayed `accept()` can never move a terminal command
+  backwards into `ACCEPTED`. See `test_accept_rejected_for_wrong_agent`,
+  `test_duplicate_accept_is_idempotent`, and
+  `test_late_accept_after_terminal_result_does_not_revert_state`.
 
 ## Not yet done — genuinely missing, not fabricated as complete
 
-1. **`ACCEPTED` lifecycle state is not implemented.** The frozen lifecycle
-   (driving spec S7) is `PENDING -> AUTHORIZED -> DISPATCHED -> ACCEPTED ->
-   SUCCEEDED/FAILED/REJECTED`; today Manager goes straight from `DISPATCHED`
-   to a terminal state on `submit_result()`, with no distinct
-   acknowledge-receipt step. Adding it means every agent (Linux today,
-   Windows once it exists) needs a new "I have received and am about to
-   execute command X" call before it executes — a cross-repo protocol
-   change, not a Manager-only fix. Not attempted this pass to avoid a
-   half-designed, unreviewed change to the highest-trust code path.
+1. **`ACCEPTED` is implemented in Manager but not yet adopted by any real
+   agent.** `POST /api/v1/agents/{agent_id}/commands/{command_id}/accept`
+   exists, is authenticated, idempotent, and tested (see above) — but
+   neither `panopticon-linux-agent` nor a Windows agent has been changed to
+   actually call it. It is deliberately optional/backward-compatible (a
+   result from plain `DISPATCHED` still works), so this is not a breaking
+   gap, just an unfinished adoption: the Linux agent's poll/execute/report
+   loop could call `accept()` right after it validates a command and before
+   it starts executing, giving Manager a real "the endpoint has this and is
+   about to run it" signal instead of only ever seeing DISPATCHED-then-
+   terminal. Not done in this pass because it requires a `panopticon-linux-
+   agent` change (out of a Manager-only session's repo) and, once Windows
+   exists, the same there.
 2. **`TERMINATE_PROCESS` can never map to `KILL_PROCESS`.**
    `ActiveResponseAction` carries no process-creation-timestamp field, and
    the Linux agent's `KILL_PROCESS`/`COLLECT_PROCESS_INFO` target schema
@@ -201,15 +234,21 @@ reasoning from that repository's side.
 
 ## Next implementation task (recommended order)
 
-1. Get this Manager-only pass's changes reviewed and merged; watch CI go
-   green on the actual GitHub Actions run (not just local `pytest`/`ruff`).
-2. Design and review the `ACCEPTED` lifecycle addition as its own small
-   ADR before touching agent code, since it's a wire-contract change on the
-   highest-trust path.
+1. Get this Manager-only pass's changes reviewed and merged (PR creation is
+   currently blocked by a transient GitHub API outage — see top of this
+   document); watch CI go green on the actual GitHub Actions run (not just
+   local `pytest`/`ruff`).
+2. Update `panopticon-linux-agent`'s command-execution loop to call the new
+   `accept()` endpoint right after it validates a dispatched command and
+   before it starts executing, so `ACCEPTED` actually appears in practice
+   instead of only being reachable via a direct test/API call. This is a
+   small, additive change to that repo (one new outbound HTTP call in its
+   existing poll/execute/report loop) — no wire-contract change was needed
+   in Manager to support it, since `accept()` was designed to be optional.
 3. Design and review the `TERMINATE_PROCESS -> KILL_PROCESS` start-time
    threading as its own ADR in `panopticon-detection-engine`, with explicit
    attention to PID-reuse correctness, before writing code.
-4. Only after 2-3 are designed: implement, in order, (a) the correlation
+4. Only after 3 is designed: implement, in order, (a) the correlation
    engine change, (b) the Manager translation update, (c) an end-to-end test
    proving a real `Level >= 12` process-creation detection can produce an
    analyst-approval-gated `KILL_PROCESS` command and that authorizing it
@@ -217,6 +256,10 @@ reasoning from that repository's side.
 5. Windows agent response support is a separate, large body of work — scope
    it as its own milestone rather than folding it into a Response Engine
    pass.
+6. Add the isolation-helper crash/IPC-fuzz tests to `panopticon-linux-agent`
+   (item 4 above) — genuinely still outstanding from the prior directive's
+   explicit ask and not touched in either Manager pass, since it requires
+   that repo's C++/CMake/Linux build environment.
 
 ## Known blockers
 
