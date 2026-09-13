@@ -1,7 +1,10 @@
 # Response Engine — implementation state / handoff
 
-Last updated: 2026-09-13, after a third pass that (a) opened the Manager PR
-and (b) adopted `ACCEPTED` in `panopticon-linux-agent`. This document exists
+Last updated: 2026-09-13, after a fourth pass that threaded
+`TERMINATE_PROCESS -> KILL_PROCESS` start-time data across five repos
+(response-engine ADR, schema, both agents' producer/consumer sides,
+detection engine, and Manager) and launched a background implementation
+pass for Windows agent response support. This document exists
 so a future session (or a compacted context) can reconstruct exactly what is
 real, what is verified, and what is next, without re-deriving it from
 scratch. Re-verify against the actual repos before trusting anything here as
@@ -116,7 +119,11 @@ reasoning from that repository's side.
 - **Detection recommendation**: `ActiveResponseAction` /
   `ActiveResponseEngine.resolve_action`, same file layout as Alert above.
   Recommends exactly 3 actions today: `TERMINATE_PROCESS`,
-  `BLOCK_FIREWALL_IP`, `ISOLATE_HOST`. Carries no process-start-time field.
+  `BLOCK_FIREWALL_IP`, `ISOLATE_HOST`. **As of `panopticon-detection-engine@
+  b2a02fe`, carries `target_start_time_ticks` (optional) when the triggering
+  event's `process.start_time_ticks` was present** — see item 0 above. The
+  vendored copy at `vendor/eyedetect` does not yet have this (see "Known
+  blockers").
 - **Typed command**: `manager/routers/commands.py`'s `Command` model — the
   closed 7-action `Literal` and per-action target schema (`{pid,
   start_time_ticks}` for process actions, `{path}` for file actions, empty
@@ -192,6 +199,32 @@ reasoning from that repository's side.
 
 ## Not yet done — genuinely missing, not fabricated as complete
 
+0. **RESOLVED this pass.** Item 2 below (`TERMINATE_PROCESS -> KILL_PROCESS`
+   start-time threading) is done end-to-end and verified: ADR
+   (`panopticon-response-engine/docs/adr/002-terminate-process-start-time-threading.md`),
+   Schema 0.4 gains optional `process.start_time_ticks`
+   (`panopticon-agent@fd80031`, schema-only), `panopticon-linux-agent@523473f`
+   emits it in canonical telemetry (verified: Ubuntu 24.04 container
+   build+ctest green), `panopticon-detection-engine@b2a02fe` threads it
+   through `ActiveResponseAction`/`ProcessNode` (verified: 165 passed, 2
+   skipped, full suite), `panopticon-response-engine@a500fa0` actually
+   translates `TERMINATE_PROCESS` into `KILL_PROCESS` when present (verified:
+   43 passed), and this repo's `vendor/response_engine` pin is bumped to
+   `a500fa0` with a new end-to-end test proving `on_alert_created` stages a
+   real `PENDING`/`ANALYST_APPROVAL` `KILL_PROCESS` response_actions row
+   (verified: 95 passed). **`vendor/eyedetect` was deliberately NOT bumped**
+   to pick up the matching `panopticon-detection-engine` commit: doing so
+   pulls in several unrelated upstream commits that regress two pre-existing
+   tests (`test_replay_produces_gate_a_and_b_alerts`,
+   `test_certutil_chain_produces_three_alerts` — `CORR-003` stops firing on
+   the demo fixture, root cause not investigated). This means **Manager's own
+   detection pipeline (via `vendor/eyedetect`) does not yet benefit from this
+   fix** — only `panopticon-detection-engine` run standalone does. See "Known
+   blockers" below for the exact follow-up needed before `vendor/eyedetect`
+   can be safely bumped. Windows telemetry still never carries
+   `start_time_ticks` (tracked as item 3 below, `panopticon-agent`'s own
+   producer change, deliberately deferred to avoid colliding with the
+   concurrent Windows response-engine implementation pass).
 1. **RESOLVED this pass.** `panopticon-linux-agent` @ `9f73fcb` ("feat(response):
    send DISPATCHED->ACCEPTED acknowledgement before executing a command")
    adds `curl_https_client::accept_command` and calls it in `main.cpp`
@@ -266,24 +299,58 @@ reasoning from that repository's side.
    consistently green across multiple consecutive runs after fixing a test
    script race (`wait $PID` on a reparented, non-child PID doesn't actually
    block).
-3. Design and review the `TERMINATE_PROCESS -> KILL_PROCESS` start-time
-   threading as its own ADR in `panopticon-detection-engine`, with explicit
-   attention to PID-reuse correctness, before writing code.
-4. Only after 3 is designed: implement, in order, (a) the correlation
-   engine change, (b) the Manager translation update, (c) an end-to-end test
-   proving a real `Level >= 12` process-creation detection can produce an
-   analyst-approval-gated `KILL_PROCESS` command and that authorizing it
-   dispatches correctly.
-5. Windows agent response support is a separate, large body of work — scope
-   it as its own milestone rather than folding it into a Response Engine
-   pass.
+3. **RESOLVED this pass.** See item 0 above and
+   `panopticon-response-engine/docs/adr/002-terminate-process-start-time-threading.md`.
+4. **Mostly resolved.** (a) correlation engine change: done
+   (`panopticon-detection-engine@b2a02fe`). (b) Manager translation: done
+   (submodule bump, this repo @ `c6daa67`). (c) end-to-end test: done at the
+   `response.on_alert_created` unit level
+   (`test_on_alert_created_terminate_process_with_start_time_stages_kill_process_pending`)
+   proving a `KILL_PROCESS` response_actions row lands `PENDING`/
+   `ANALYST_APPROVAL` with the correct `{pid, start_time_ticks}` target, and
+   that authorizing it dispatches through the same
+   `authorize_response_action` path already covered by
+   `test_authorize_response_action_creates_a_dispatchable_command`. **Not yet
+   done**: a true end-to-end test that starts from a raw process-creation
+   telemetry event ingested through the full pipeline (worker -> rule match
+   -> `Alert` -> `on_alert_created`) rather than a hand-built `_Alert`/
+   `active_response` dict — blocked on the `vendor/eyedetect` bump (see
+   "Known blockers"), since that's what would let a real `Level >= 12` rule
+   match produce the recommendation in the first place.
+5. Windows agent response support is underway as a separate background
+   implementation pass (see the next report from that work when it lands).
+6. Investigate and fix the `CORR-003`/Gate-B regression blocking the
+   `vendor/eyedetect` bump (see "Known blockers"), then bump it and add the
+   true end-to-end test described in item 4 above.
+7. `panopticon-agent` (Windows) still needs its own Schema 0.4
+   `start_time_ticks` producer change once the concurrent Windows
+   response-engine work lands, so Windows-originated detections can also
+   produce real `KILL_PROCESS` targets (today they still safely fail closed).
 
 ## Known blockers
 
-None that block further Linux/Manager-side work. Item 3 above is a
-correctness-sensitive design decision, not "blocked," and should not be
-rushed past design review. Item 5 (Windows) and real kernel-network/
-real-nftables validation against a non-loopback interface (as opposed to
-the container/namespace-level IPC and state-recovery coverage added this
-pass) remain genuinely environment-dependent per directive §28 — that
-needs the VMware environment a teammate is preparing separately.
+- **`vendor/eyedetect` bump is blocked on a pre-existing, unrelated
+  regression, not on this pass's work.** Bumping the pin from
+  `3dc75d8` to `panopticon-detection-engine`'s current `main`
+  (`b2a02fe`, which includes the `start_time_ticks` fix) causes
+  `test_replay_produces_gate_a_and_b_alerts` and
+  `test_certutil_chain_produces_three_alerts` to fail: `CORR-003` no longer
+  fires on `tools/demo_events.ndjson` / the Gate-B fixture. The likely
+  culprit is one of the intervening commits — `356afab` ("fix(rules):
+  suppress DET-PROC-011 false positives on test harness scripts") or
+  `2e6a001` ("feat(rules): add 6 Linux-specific detection rules...") — but
+  this was not root-caused; only isolated by cherry-picking just the
+  `start_time_ticks` commit onto the old pin in a scratch check, confirming
+  the regression is unrelated to it. Whoever owns `panopticon-detection-
+  engine`'s rule set needs to investigate before `vendor/eyedetect` can be
+  bumped again; until then, Manager's actual detection pipeline (as opposed
+  to `panopticon-detection-engine` run standalone) still cannot produce a
+  real `KILL_PROCESS` command from a live alert, even though every other
+  link in the chain now works.
+- Item 3 (Windows agent) is a correctness-sensitive design decision in
+  progress, not "blocked" — a background implementation pass is underway;
+  see its own report when it lands. Real kernel-network/real-nftables
+  validation against a non-loopback interface (as opposed to the container/
+  namespace-level IPC and state-recovery coverage already added) remains
+  genuinely environment-dependent per directive §28 — that needs the VMware
+  environment a teammate is preparing separately.
