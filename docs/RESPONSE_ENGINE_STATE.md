@@ -712,6 +712,41 @@ undocumented gap found and recorded rather than papered over.**
    response-engine work lands, so Windows-originated detections can also
    produce real `KILL_PROCESS` targets (today they still safely fail closed).
 
+## Phase 8 (2026-09-14): COLLECT_PROCESS_INFO/COLLECT_NETWORK_CONNECTIONS mappings added
+
+Both actions previously had no path from any detection recommendation to a
+real command anywhere in the system -- `response_engine.translate_recommendation`
+returned `None` for both, and `panopticon-detection-engine`'s
+`ActiveResponseEngine.resolve_action` had no branch that could produce
+either. Fixed across two repos:
+
+- `panopticon-detection-engine@49a613a`: `resolve_action` gained two new
+  `custom_action`-driven branches (a rule must opt in via its own YAML
+  `active_response:` field, matching the existing `TERMINATE_PROCESS`/
+  `BLOCK_FIREWALL_IP` pattern -- deliberately does **not** auto-fire on
+  severity level alone, since inventing a new heuristic for a read-only
+  evidence-collection action is rule-authoring policy this engine does not
+  own).
+- `panopticon-response-engine@8b521aa`: `translate_recommendation` gained
+  matching mappings. `COLLECT_PROCESS_INFO` applies the *same*
+  PID-reuse-safety fail-closed check as `TERMINATE_PROCESS` (missing/zero/
+  wrong-typed `start_time_ticks` produces no command) -- being read-only
+  does not make misidentifying the target acceptable.
+- `panopticon-manager@00cbf18`: bumped `vendor/response_engine` to pick
+  this up; added two **real, non-monkeypatched** end-to-end tests
+  (`test_on_alert_created_collect_process_info_is_enqueued_immediately`,
+  `test_on_alert_created_collect_network_connections_is_enqueued_immediately`)
+  proving `on_alert_created` genuinely stages and auto-enqueues both as
+  `AUTO_SAFE` commands through the real `translate_recommendation` call --
+  not a faked one, unlike the pre-existing synthetic-mapping test whose
+  comment claimed this was impossible until now.
+
+**CODE-VERIFIED and CI-VERIFIED** (all three repos green): the *mapping*
+gap is closed. This does **not** by itself mean any real, currently-shipped
+detection rule actually sets `active_response: COLLECT_PROCESS_INFO` in its
+YAML -- no rule does yet, since nothing previously consumed it. Wiring an
+actual rule to opt in is separate, not-yet-requested scope.
+
 ## Known blockers
 
 - **`vendor/eyedetect` bump is blocked on a pre-existing, unrelated
@@ -746,6 +781,32 @@ undocumented gap found and recorded rather than papered over.**
   The bump remains unsafe until `panopticon-detection-engine`'s own
   `CORR-003` regression is fixed upstream; per the driving directive,
   `vendor/eyedetect` is not being modified here to work around it.
+- **ROOT CAUSE FOUND during Phase 8 (2026-09-14) -- this was never actually
+  a regression.** An organization-wide open-PR audit found
+  `panopticon-detection-engine#11` ("correlation: key on PID, enforce the
+  window, add CORR-003"), whose head commit **is** `3dc75d8` -- the exact
+  SHA this repo's `vendor/eyedetect` has been pinned to all along.
+  `git merge-base --is-ancestor 3dc75d8 origin/main` returns false: that
+  commit was never merged into `panopticon-detection-engine`'s main branch
+  at all. A prior session pinned the vendor submodule directly to an
+  open, unmerged PR branch tip instead of a reviewed main commit. Bumping
+  to actual current main doesn't "regress" CORR-003 -- main never had it
+  merged in the first place. PR #11 is CLEAN/MERGEABLE against current
+  main and CI-green (155/2 skipped, all 3 Python versions) as of its last
+  push. A companion PR, `panopticon-agent#4` ("collectors: PID->image
+  cache backfill + System/TimeCreated for V3 families"), fixes two
+  prerequisite live-telemetry bugs from the same Gate-B test session
+  (Sysmon's `"<unknown process>"` sentinel breaking `DET-NET-006`'s name
+  match, and unreliable Sysmon `UtcTime` blowing the 60s correlation
+  window by ~12.5 hours) -- both PRs are the real, reviewed, matched-pair
+  fix for this entire blocker, authored by a teammate (`sokhiaryan`), not
+  something this session should reimplement. Merging them is a human
+  decision (`gh pr merge` is blocked here by an auto-mode guardrail
+  regardless of instruction-level approval) -- **STATUS: BLOCKED, REQUIRES
+  HUMAN DECISION**, not further engineering investigation. Once merged,
+  re-attempt the `vendor/eyedetect` bump against the resulting commit and
+  re-verify `test_certutil_chain_produces_three_alerts` /
+  `test_replay_produces_gate_a_and_b_alerts` pass for real.
 - Windows agent response support (item 3/5 above) is implemented and
   merged, but real elevation-dependent behavior on both platforms — live
   `TerminateProcess` against a genuinely protected target, live WFP/nftables
