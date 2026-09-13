@@ -26,6 +26,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     import manager.detection.factory as factory_module
     import manager.detection.response as response_module
     import manager.migrations as migrations_module
+    import manager.routers.alerts as alerts_module
     import manager.routers.commands as commands_module
     import manager.routers.enrollment as enrollment_module
     import manager.routers.health as health_module
@@ -39,6 +40,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
         commands_module,
         response_module,
         response_actions_module,
+        alerts_module,
         factory_module,
         auth_module,
         migrations_module,

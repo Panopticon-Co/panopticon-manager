@@ -82,6 +82,14 @@ distinct from the agent enrollment token). Returns a bearer token once;
 only its SHA-256 digest is stored in `analyst_credentials`. Mirrors
 `POST /api/v1/agents/enroll`'s pattern — see `manager/auth.py`.
 
+## `GET /api/v1/alerts`
+
+Analyst-gated, optional `?host_id=` filter and `?limit=` (capped at 200).
+Lists alerts most-recent-first from the `alerts` table — the SQLite-backed
+equivalent of tailing `alerts.ndjson` for a client (e.g. the console) that
+wants to poll Manager directly instead. Read-only; never executes anything.
+`manager/routers/alerts.py`.
+
 ## `GET /api/v1/response-actions`
 
 Analyst-gated (`Authorization: Bearer <analyst token>`), optional
