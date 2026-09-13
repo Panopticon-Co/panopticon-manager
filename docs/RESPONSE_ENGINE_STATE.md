@@ -247,13 +247,25 @@ reasoning from that repository's side.
    (not just local `pytest`/`ruff`), and push the `panopticon-linux-agent`
    ACCEPTED-adoption commit (`9f73fcb`, already on `origin/main`) through its
    own CI the same way.
-2. Add the isolation-helper crash/IPC-fuzz tests in `panopticon-linux-agent`
-   (directive-mandated: helper crash before/during operation, restart with
-   existing state, release after restart, malformed IPC, unauthorized peer,
-   oversized IPC, repeated isolate, repeated release). Now genuinely
-   unblocked in this environment via the Docker-based Ubuntu 24.04 build
-   used to verify item 1 above — no VMware needed for the parser/unit-test
-   layer of this work, only for real-network/real-nftables validation.
+2. **RESOLVED this pass.** `panopticon-linux-agent` @ `a2ee97a` ("fix(isolation):
+   reject oversized IPC frames instead of parsing a truncated prefix; add
+   robustness e2e suite") fixed a real bug found while implementing this:
+   `isolation_helper_main.cpp`'s `recv()` buffer was exactly
+   `kIsolationRequestFrameSize` bytes, so a SOCK_SEQPACKET packet larger than
+   that was silently truncated by the kernel to fit, and the truncated
+   prefix could still parse as a syntactically valid frame -- there was no
+   real "reject oversized input" check, only an accidental one for frames
+   that happened not to decode. Fixed by sizing the buffer one byte larger
+   and requiring an exact-length match. Added `isolation-raw-frame-tool`
+   (sends arbitrary raw bytes bypassing the typed encoder) and
+   `run_isolation_robustness_e2e.sh`, wired into CI, covering: malformed IPC
+   (wrong size, invalid opcode), oversized IPC, an unauthorized peer UID, a
+   helper crash (`kill -9`) while isolated, fail-closed re-apply on restart,
+   and release after that restart. Verified with repeated full
+   Docker-container builds/runs against `ubuntu:24.04` (matching CI):
+   consistently green across multiple consecutive runs after fixing a test
+   script race (`wait $PID` on a reparented, non-child PID doesn't actually
+   block).
 3. Design and review the `TERMINATE_PROCESS -> KILL_PROCESS` start-time
    threading as its own ADR in `panopticon-detection-engine`, with explicit
    attention to PID-reuse correctness, before writing code.
@@ -268,7 +280,10 @@ reasoning from that repository's side.
 
 ## Known blockers
 
-None that block further Linux/Manager-side work. Items 3/4 above are
-correctness-sensitive design decisions, not "blocked," and should not be
-rushed past design review. Item 5 (Windows) and the real-network/real-
-nftables portion of item 2 remain genuinely environment/scope-dependent.
+None that block further Linux/Manager-side work. Item 3 above is a
+correctness-sensitive design decision, not "blocked," and should not be
+rushed past design review. Item 5 (Windows) and real kernel-network/
+real-nftables validation against a non-loopback interface (as opposed to
+the container/namespace-level IPC and state-recovery coverage added this
+pass) remain genuinely environment-dependent per directive §28 — that
+needs the VMware environment a teammate is preparing separately.
