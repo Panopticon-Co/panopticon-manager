@@ -29,9 +29,18 @@ rendered by the vendored engine's `Metrics.render_prometheus()`.
 
 Body `{agent_id, host_id}`, header `X-Panopticon-Enrollment-Token` (a single
 shared bootstrap secret, `PANOPTICON_ENROLLMENT_TOKEN`). Returns a bearer
-token (`access_token`) once; only its SHA-256 digest is stored. Re-enrolling
-an `agent_id` overwrites its token/host binding — see
-`docs/adr/002-wire-protocol-ack-semantics.md` and `manager/auth.py`.
+token (`access_token`) once; only its SHA-256 digest is stored. **CODE-VERIFIED
+2026-09-13**: re-enrolling an already-enrolled `agent_id` is rejected with
+`409` (`INSERT`, not `INSERT OR REPLACE`, catching `sqlite3.IntegrityError`)
+— it does **not** overwrite the existing token/host binding. This closes an
+agent-identity-takeover gap: since `PANOPTICON_ENROLLMENT_TOKEN` is
+necessarily one shared, fleet-wide secret, an overwrite-on-re-enroll would
+let anyone holding that secret hijack an already-trusted agent's identity.
+There is currently no revoke-then-re-enroll flow (a separate, not-yet-built
+feature). See `manager/auth.py`'s `enroll()` and
+`tests/test_adversarial_security.py::test_re_enrolling_an_existing_agent_id_is_rejected_not_silently_overwritten`.
+`docs/adr/002-wire-protocol-ack-semantics.md` predates this fix and should
+not be read for enrollment semantics.
 
 ## `POST /api/v1/ingest`
 
