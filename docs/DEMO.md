@@ -149,12 +149,13 @@ From `panopticon-manager/`:
 ```bash
 export PANOPTICON_ENROLLMENT_TOKEN=demo-enrollment-secret
 export PANOPTICON_COMMAND_TOKEN=demo-command-secret
-export PANOPTICON_ANALYST_BOOTSTRAP_TOKEN=demo-analyst-bootstrap
+export PANOPTICON_ANALYST_ENROLLMENT_TOKEN=demo-analyst-bootstrap
 uvicorn manager.app:app --host 127.0.0.1 --port 8000
 ```
 
-(Check `manager/config.py` for the exact environment variable names this
-checkout expects — bootstrap tokens gate agent/analyst enrollment; a fresh
+(Check `manager/auth.py`/`manager/routers/response_actions.py` for the exact
+environment variable and header names this checkout expects — bootstrap
+tokens gate agent/analyst enrollment; a fresh
 SQLite DB is created and migrated automatically on first request.)
 
 Confirm it's up:
@@ -201,12 +202,29 @@ CNG / OpenSSL respectively):
 openssl ecparam -genkey -name prime256v1 -noout -out /tmp/demo-agent-key.pem
 
 NONCE=$(curl -s -X POST http://127.0.0.1:8000/api/v1/agents/enrollment-challenge | jq -r .nonce)
-echo -n "$NONCE" | base64 -d > /tmp/nonce.bin
-openssl dgst -sha256 -sign /tmp/demo-agent-key.pem -out /tmp/sig.bin /tmp/nonce.bin
-SIGNATURE=$(base64 -w0 /tmp/sig.bin)
 # The last 65 bytes of a P-256 SubjectPublicKeyInfo are exactly the raw
 # uncompressed point (0x04 || X || Y) this contract expects.
 PUBLIC_KEY=$(openssl ec -in /tmp/demo-agent-key.pem -pubout -outform DER 2>/dev/null | tail -c 65 | base64 -w0)
+
+# The contract requires a raw 64-byte r||s ECDSA signature
+# (docs/adr/004-agent-enrollment-identity.md), not the variable-length DER
+# encoding `openssl dgst -sign` produces -- convert with the `cryptography`
+# package this repo already depends on (requirements.txt), the same way
+# tests/conftest.py::enroll_test_agent does.
+SIGNATURE=$(python3 - "$NONCE" <<'PY'
+import base64, sys
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, utils
+
+nonce = base64.b64decode(sys.argv[1])
+with open("/tmp/demo-agent-key.pem", "rb") as f:
+    key = serialization.load_pem_private_key(f.read(), password=None)
+der_signature = key.sign(nonce, ec.ECDSA(hashes.SHA256()))
+r, s = utils.decode_dss_signature(der_signature)
+raw_signature = r.to_bytes(32, "big") + s.to_bytes(32, "big")
+print(base64.b64encode(raw_signature).decode())
+PY
+)
 
 AGENT_TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/v1/agents/enroll \
   -H "Content-Type: application/json" \
@@ -215,8 +233,8 @@ AGENT_TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/v1/agents/enroll \
 
 ANALYST_TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/v1/analysts/enroll \
   -H "Content-Type: application/json" \
-  -H "X-Panopticon-Analyst-Bootstrap-Token: $PANOPTICON_ANALYST_BOOTSTRAP_TOKEN" \
-  -d '{"analyst_id": "demo-analyst"}' | jq -r .token)
+  -H "X-Panopticon-Analyst-Enrollment-Token: $PANOPTICON_ANALYST_ENROLLMENT_TOKEN" \
+  -d '{"analyst_id": "demo-analyst"}' | jq -r .access_token)
 
 echo "agent token:   $AGENT_TOKEN"
 echo "analyst token: $ANALYST_TOKEN"
@@ -244,23 +262,22 @@ Startup folder — the exact shape `panopticon-agent`'s Sysmon collector
 produces, and the same shape
 `tests/test_real_ingest_detection_reachability.py` posts:
 
+NDJSON requires exactly one JSON object per line, so write it to a file
+first rather than pretty-printing it inline (a multi-line `--data-binary`
+body would be parsed as several invalid partial lines):
+
 ```bash
+cat > /tmp/demo-event.json <<'EOF'
+{"schema_version": "0.4", "event": {"id": "evt_9999999999999999999999999999999999999999999999999999999999999999", "category": "file", "type": "create", "timestamp": "2026-09-14T12:00:00.000Z"}, "source": {"kind": "sysmon", "provider": "Microsoft-Windows-Sysmon", "channel": "Microsoft-Windows-Sysmon/Operational", "record_id": 1}, "agent": {"id": "demo-agent", "version": "0.1.0"}, "host": {"id": "DEMO-HOST", "hostname": "DEMO-HOST", "os": {"name": "Windows 11 Pro", "build": "26100"}}, "user": {"name": null, "domain": null, "sid": null}, "process": {"entity_id": "proc_dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "pid": 6001, "name": "explorer.exe", "executable": "C:\\Windows\\explorer.exe", "command_line": "C:\\Windows\\explorer.exe", "start_time_ticks": null, "parent": {"entity_id": null, "pid": 600, "name": "userinit.exe"}, "hash": {"sha256": null}}, "file": {"operation": "create", "path": "C:\\Users\\victim\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\evil.exe", "target_path": null, "previous_path": null, "hash": {"sha256": null}}}
+EOF
+
 curl -s -X POST http://127.0.0.1:8000/api/v1/ingest \
   -H "Authorization: Bearer $AGENT_TOKEN" \
   -H "X-Panopticon-Batch-Id: demo-batch-1" \
   -H "X-Panopticon-Agent-Id: demo-agent" \
   -H "X-Panopticon-Protocol: 1" \
   -H "Content-Type: application/x-ndjson" \
-  --data-binary '{
-    "schema_version": "0.4",
-    "event": {"id": "evt_9999999999999999999999999999999999999999999999999999999999999999", "category": "file", "type": "create", "timestamp": "2026-09-14T12:00:00.000Z"},
-    "source": {"kind": "sysmon", "provider": "Microsoft-Windows-Sysmon", "channel": "Microsoft-Windows-Sysmon/Operational", "record_id": 1},
-    "agent": {"id": "demo-agent", "version": "0.1.0"},
-    "host": {"id": "DEMO-HOST", "hostname": "DEMO-HOST", "os": {"name": "Windows 11 Pro", "build": "26100"}},
-    "user": {"name": null, "domain": null, "sid": null},
-    "process": {"entity_id": "proc_dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "pid": 6001, "name": "explorer.exe", "executable": "C:\\Windows\\explorer.exe", "command_line": "C:\\Windows\\explorer.exe", "start_time_ticks": null, "parent": {"entity_id": null, "pid": 600, "name": "userinit.exe"}, "hash": {"sha256": null}},
-    "file": {"operation": "create", "path": "C:\\Users\\victim\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\evil.exe", "target_path": null, "previous_path": null, "hash": {"sha256": null}}
-  }'
+  --data-binary @/tmp/demo-event.json
 ```
 
 **Expected stage-by-stage output:**
