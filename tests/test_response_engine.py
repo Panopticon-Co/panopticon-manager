@@ -99,12 +99,14 @@ def test_translate_recommendation_isolate_host_is_a_direct_mapping() -> None:
     assert mapped == ("ISOLATE_HOST", {}, "direct mapping")
 
 
-def test_translate_recommendation_block_firewall_ip_downgrades_to_isolate_host() -> None:
+def test_translate_recommendation_block_firewall_ip_fails_closed() -> None:
+    # BLOCK_FIREWALL_IP has no equivalent in the closed 7-action set. It used
+    # to be opportunistically "downgraded" to a real ISOLATE_HOST command --
+    # silently substituting full host isolation for a narrow, IP-scoped
+    # block. That substitution was removed as dishonest and dangerous; no
+    # command may be produced instead.
     active_response = {"target_ip": "1.2.3.4"}
-    action, target, reason = response.translate_recommendation("BLOCK_FIREWALL_IP", active_response)
-    assert action == "ISOLATE_HOST"
-    assert target == {}
-    assert "downgraded" in reason
+    assert response.translate_recommendation("BLOCK_FIREWALL_IP", active_response) is None
 
 
 def test_translate_recommendation_unknown_action_returns_none() -> None:
