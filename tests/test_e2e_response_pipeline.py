@@ -287,7 +287,10 @@ def test_quarantine_file_real_detector_recommendation_succeeds_on_a_true_product
     QUARANTINE_FILE but resolve_action had no matching branch, so the
     recommendation silently disappeared before reaching translate_recommendation."""
     agent_token = _enroll(client, "agent-quarantine-prod", "HOST-QUARANTINE-PROD")
-    target_path = r"C:\Users\victim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\evil.exe"
+    target_path = (
+        r"C:\Users\victim\AppData\Roaming\Microsoft\Windows"
+        r"\Start Menu\Programs\Startup\evil.exe"
+    )
     event = _startup_folder_file_write_event(file_path=target_path, host_id="HOST-QUARANTINE-PROD")
     _run_real_detector_event(tmp_path, event, "agent-quarantine-prod")
 
