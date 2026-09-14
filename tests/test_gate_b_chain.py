@@ -63,7 +63,7 @@ def _db(path: Path) -> sqlite3.Connection:
 
 def test_certutil_chain_produces_three_alerts(tmp_path: Path) -> None:
     conn = _db(tmp_path / "p.db")
-    run, sink, writer = build_detection_run(
+    run, sink, writer, _context = build_detection_run(
         conn, alerts_path=tmp_path / "alerts.ndjson", rules_dir=_DEFAULT_RULES_DIR
     )
     try:

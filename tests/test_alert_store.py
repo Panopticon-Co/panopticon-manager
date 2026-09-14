@@ -1,7 +1,7 @@
 """Alert persistence — manager/detection/store.py.
 
 The detection engine assigns each atomic alert a deterministic
-``ALT-<sha1[:8]>`` id (``vendor/eyedetect/src/alerting/alert.py::_stable_alert_id``),
+``ALT-<sha1[:8]>`` id (``vendor/eyedetect/panopticon_detection/alerting/alert.py::_stable_alert_id``),
 so re-processing the same event after a crash produces the same id. ``INSERT OR
 IGNORE`` on that id is what makes the worker's claim/lease loop safe to retry.
 """

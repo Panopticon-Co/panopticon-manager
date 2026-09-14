@@ -5,6 +5,11 @@ httpx>=0.27.0
 pytest>=8.0.0
 ruff>=0.4.0
 jsonschema>=4.20.0
+# Phase 13: verifies the ECDSA P-256 proof-of-possession signature agents
+# submit during enrollment (docs/adr/004-agent-enrollment-identity.md). No
+# asymmetric-crypto library existed in this repo before -- this is the
+# canonical PyCA package, not a second one added alongside an existing choice.
+cryptography>=42.0.0
 # Editable install of the vendored Response Engine domain-contract package
 # (pinned git submodule at vendor/response_engine -- see
 # docs/adr/006-response-engine-package-extraction.md). Installed after this

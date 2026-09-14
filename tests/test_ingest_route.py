@@ -6,6 +6,8 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from tests.conftest import enroll_test_agent
+
 _SAMPLES_DIR = Path(__file__).resolve().parents[1] / "vendor" / "eyedetect" / "samples"
 _SAMPLE = _SAMPLES_DIR / "officer_live_sample.ndjson"
 
@@ -99,11 +101,7 @@ def test_linux_procfs_v4_event_is_accepted(client: TestClient) -> None:
         "channel": None,
         "record_id": None,
     }
-    enrollment = client.post(
-        "/api/v1/agents/enroll",
-        json={"agent_id": "test-agent", "host_id": event["host"]["id"]},
-        headers={"X-Panopticon-Enrollment-Token": "test-bootstrap-token"},
-    )
+    enrollment = enroll_test_agent(client, "test-agent", event["host"]["id"])
     assert enrollment.status_code == 200
     response = client.post(
         "/api/v1/ingest",

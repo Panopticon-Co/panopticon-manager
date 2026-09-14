@@ -5,7 +5,7 @@ is up. Readiness (/readyz) additionally checks the database is reachable and
 migrated to the version this build expects, since that's the actual
 precondition for serving ingest/query traffic in later phases.
 
-Reuses HealthState and Metrics from the vendored engine (vendor/eyedetect/src/
+Reuses HealthState and Metrics from the vendored engine (vendor/eyedetect/panopticon_detection/
 reliability/{health,metrics}.py) rather than reinventing them — both are
 already dependency-free and general-purpose.
 """
@@ -56,15 +56,28 @@ def readyz(response: Response) -> dict:
 def metrics_endpoint() -> Response:
     body = metrics.render_prometheus()
     try:
-        pending = (
-            db.connect()
-            .execute("SELECT COUNT(*) AS c FROM events WHERE detect_state = 'pending'")
-            .fetchone()["c"]
-        )
+        conn = db.connect()
+        pending = conn.execute(
+            "SELECT COUNT(*) AS c FROM events WHERE detect_state = 'pending'"
+        ).fetchone()["c"]
         body += (
             "\n# HELP panopticon_events_pending Events awaiting detection.\n"
             "# TYPE panopticon_events_pending gauge\n"
             f"panopticon_events_pending {pending}\n"
+        )
+        # A permanently-failed event (one whose rule evaluation raised) is
+        # otherwise invisible outside a direct database query -- the worker
+        # never retries or re-queues it (ADR 003: poison exactly one event,
+        # never the claim loop), so without this gauge a growing backlog of
+        # silently-quarantined events has no operational signal at all.
+        failed = conn.execute(
+            "SELECT COUNT(*) AS c FROM events WHERE detect_state = 'failed'"
+        ).fetchone()["c"]
+        body += (
+            "\n# HELP panopticon_events_failed Events whose detection permanently failed "
+            "(poisoned exactly once, never retried).\n"
+            "# TYPE panopticon_events_failed gauge\n"
+            f"panopticon_events_failed {failed}\n"
         )
     except Exception:  # pragma: no cover - metrics must never 500
         pass

@@ -78,7 +78,7 @@ def _run_real_detector_event(tmp_path, event: dict, agent_id: str) -> None:
     84-rule set manager/config.py points production at), exactly the path
     manager/detection/worker.py exercises -- minus the async queue."""
     conn = db_module.connect()
-    run, sink, writer = build_detection_run(
+    run, sink, writer, _context = build_detection_run(
         conn, alerts_path=tmp_path / "e2e-kill-alerts.ndjson", rules_dir=_DEFAULT_RULES_DIR
     )
     try:
@@ -113,7 +113,7 @@ def _run_real_detector_burst(tmp_path, agent_id: str) -> None:
     test's TestClient is using -- exactly the path manager/detection/worker.py
     exercises in production, minus the async queue."""
     conn = db_module.connect()
-    run, sink, writer = build_detection_run(
+    run, sink, writer, _context = build_detection_run(
         conn, alerts_path=tmp_path / "e2e-alerts.ndjson", rules_dir=tmp_path
     )
     try:
@@ -377,17 +377,31 @@ def test_kill_process_real_detector_recommendation_fails_closed_without_start_ti
     assert row["command_id"] is None
 
 
-def test_kill_process_real_detector_recommendation_succeeds_with_a_true_production_path(
+def test_kill_process_real_detector_recommendation_succeeds_via_internal_detection_bypass(
     client: TestClient, tmp_path
 ) -> None:
-    """TRUE PRODUCTION PATH: a real process_injection event matching real
-    production rule DET-INJ-001 -> real RuleEvaluator match -> real
-    ActiveResponseEngine.resolve_action (TERMINATE_PROCESS, with genuine
-    target_start_time_ticks) -> real Alert -> real AlertSink.emit -> real
-    response.on_alert_created -> real (unmocked) translate_recommendation ->
-    KILL_PROCESS command -> dispatch -> ACCEPTED -> execution result ->
-    SUCCEEDED -> full audit trail. No ActiveResponseAction, Alert, or
-    recommendation is hand-constructed anywhere in this test."""
+    """INTERNAL DETECTION-ENGINE INTEGRATION TEST, NOT wire-ingest E2E: a real
+    process_injection event matching real production rule DET-INJ-001 is fed
+    directly to DetectionRun.process_event() (see _run_real_detector_event),
+    bypassing POST /api/v1/ingest and OfficerIngestionAdapter entirely -> real
+    RuleEvaluator match -> real ActiveResponseEngine.resolve_action
+    (TERMINATE_PROCESS, with genuine target_start_time_ticks) -> real Alert ->
+    real AlertSink.emit -> real response.on_alert_created -> real (unmocked)
+    translate_recommendation -> KILL_PROCESS command -> dispatch -> ACCEPTED
+    -> execution result -> SUCCEEDED -> full audit trail. No
+    ActiveResponseAction, Alert, or recommendation is hand-constructed
+    anywhere in this test -- but this is NOT proof that a real endpoint event
+    can reach DET-INJ-001 through the actual wire/ingestion boundary. As of
+    the Phase 15 investigation, it genuinely cannot: DET-INJ-001 requires
+    injection_type/target_process/source_process fields that have no place in
+    the strict wire schema (manager/wire/telemetry.py, extra="forbid"), and no
+    endpoint collector (Windows Sysmon/ETW or Linux /proc) currently observes
+    process injection (CreateRemoteThread, ProcessAccess, or equivalent) at
+    all. See docs/RESPONSE_ENGINE_STATE.md for the full analysis; closing that
+    gap requires new telemetry collection, out of scope for a rule-mapping
+    fix. This test still has value: it proves the KILL_PROCESS response/
+    dispatch/execution/audit machinery is correct once an Alert exists,
+    independent of how that Alert was produced."""
     agent_token = _enroll(client, "agent-kill-prod", "HOST-KILL-PROD")
     target_pid = 4433
     target_start_time_ticks = 133_012_345_670_000_000
@@ -469,14 +483,19 @@ def test_kill_process_real_detector_recommendation_succeeds_with_a_true_producti
     assert audit_events == ["created", "dispatched", "accepted", "result_received"]
 
 
-def _startup_folder_file_write_event(*, file_path: str, host_id: str = _HOST_ID) -> dict:
+def _startup_folder_file_create_event(*, file_path: str, host_id: str = _HOST_ID) -> dict:
     """A real event matching production rule DET-PERS-007's actual YAML logic
-    (file.path containing a Windows/Linux autostart location) -- the same
-    file_write event_type eyedetect's real rule set already ships."""
+    (file.path containing a Windows/Linux autostart location). Uses
+    event_type "file_create" -- what a real Sysmon Event ID 11 FileCreate
+    observation and OfficerIngestionAdapter both actually produce (see the
+    Phase 15 fix to DET-PERS-007's own event_type field, previously the
+    wire-unreachable "file_write"). This helper stays useful for the
+    internal-bypass test below; test_real_ingest_detection_reachability.py
+    covers the same rule through the actual wire/ingest boundary."""
     return {
         "schema_version": "0.4",
         "event_id": "evt_" + "7" * 64,
-        "event_type": "file_write",
+        "event_type": "file_create",
         "host_id": host_id,
         "timestamp": "2026-09-14T12:00:00.000Z",
         "process": {"name": "explorer.exe", "pid": 6001},
@@ -484,30 +503,39 @@ def _startup_folder_file_write_event(*, file_path: str, host_id: str = _HOST_ID)
     }
 
 
-def test_quarantine_file_real_detector_recommendation_succeeds_on_a_true_production_path(
+def test_quarantine_file_real_detector_recommendation_succeeds_via_internal_detection_bypass(
     client: TestClient, tmp_path
 ) -> None:
-    """TRUE PRODUCTION PATH: a real file_write event matching real production
-    rule DET-PERS-007 -> real RuleEvaluator match -> real
-    ActiveResponseEngine.resolve_action (QUARANTINE_FILE, with the
-    triggering event's real file.path) -> real Alert -> real AlertSink.emit
-    -> real response.on_alert_created -> real (unmocked)
-    translate_recommendation -> QUARANTINE_FILE command -> dispatch ->
-    ACCEPTED -> execution result -> SUCCEEDED -> full audit trail. This
-    closes the gap where DET-PERS-007 advertised active_response:
-    QUARANTINE_FILE but resolve_action had no matching branch, so the
-    recommendation silently disappeared before reaching translate_recommendation."""
+    """INTERNAL DETECTION-ENGINE INTEGRATION TEST, NOT wire-ingest E2E: a real
+    file_create event matching real production rule DET-PERS-007 is fed
+    directly to DetectionRun.process_event() (see _run_real_detector_event),
+    bypassing POST /api/v1/ingest and OfficerIngestionAdapter entirely -> real
+    RuleEvaluator match -> real ActiveResponseEngine.resolve_action
+    (QUARANTINE_FILE, with the triggering event's real file.path) -> real
+    Alert -> real AlertSink.emit -> real response.on_alert_created -> real
+    (unmocked) translate_recommendation -> QUARANTINE_FILE command ->
+    dispatch -> ACCEPTED -> execution result -> SUCCEEDED -> full audit
+    trail. This still closes the original gap where DET-PERS-007 advertised
+    active_response: QUARANTINE_FILE but resolve_action had no matching
+    branch -- but DET-PERS-007's event_type was ALSO wrong (file_write, which
+    no real telemetry produces) until the Phase 15 fix; see
+    test_real_ingest_detection_reachability.py for genuine proof that a real
+    POST /api/v1/ingest call now reaches this same rule."""
     agent_token = _enroll(client, "agent-quarantine-prod", "HOST-QUARANTINE-PROD")
     target_path = (
         r"C:\Users\victim\AppData\Roaming\Microsoft\Windows"
         r"\Start Menu\Programs\Startup\evil.exe"
     )
-    event = _startup_folder_file_write_event(file_path=target_path, host_id="HOST-QUARANTINE-PROD")
+    event = _startup_folder_file_create_event(file_path=target_path, host_id="HOST-QUARANTINE-PROD")
     _run_real_detector_event(tmp_path, event, "agent-quarantine-prod")
 
     conn = db_module.connect()
+    # This same real startup-folder event also legitimately fires DET-FILE-001
+    # (a detection-only rule with no active_response) -- filter by rule_id,
+    # not just agent_id, since both are now real, correct, independent matches.
     alert_row = conn.execute(
-        "SELECT alert_id FROM alerts WHERE agent_id = 'agent-quarantine-prod'"
+        "SELECT alert_id FROM alerts WHERE agent_id = 'agent-quarantine-prod' "
+        "AND rule_id = 'DET-PERS-007'"
     ).fetchone()
     assert alert_row is not None, "the real RuleEvaluator did not fire DET-PERS-007"
     alert_id = str(alert_row["alert_id"])
@@ -578,20 +606,25 @@ def test_quarantine_file_real_detector_recommendation_succeeds_on_a_true_product
     assert audit_events == ["created", "dispatched", "accepted", "result_received"]
 
 
-def test_kill_process_pid_reuse_is_rejected_on_a_true_production_path(
+def test_kill_process_pid_reuse_is_rejected_via_internal_detection_bypass(
     client: TestClient, tmp_path
 ) -> None:
-    """PID REUSE SECURITY (real production path): a real DET-INJ-001 detection
-    authorizes a KILL_PROCESS command binding start_time_ticks=T1 for PID X.
-    Before the agent executes it, PID X is reused by an unrelated process
-    with a different start_time_ticks T2. The agent-side identity gate lives
-    in the endpoint, not the manager -- what the manager guarantees, and what
-    this test proves, is that the dispatched command still carries the
-    original T1 start_time_ticks pass-through-only token untouched, so an
-    honest endpoint checking the live process's actual start time against it
-    is guaranteed to observe a mismatch and refuse to act. The manager never
-    re-derives or refreshes this value after the real detector first observed
-    it, which is what makes an endpoint-side T1 != T2 comparison meaningful."""
+    """PID REUSE SECURITY, via INTERNAL DETECTION-ENGINE BYPASS (not
+    wire-ingest E2E -- see the sibling KILL_PROCESS test above for why
+    DET-INJ-001 cannot be driven through real POST /api/v1/ingest today): a
+    DET-INJ-001 detection authorizes a KILL_PROCESS command binding
+    start_time_ticks=T1 for PID X. Before the agent executes it, PID X is
+    reused by an unrelated process with a different start_time_ticks T2. The
+    agent-side identity gate lives in the endpoint, not the manager -- what
+    the manager guarantees, and what this test proves, is that the dispatched
+    command still carries the original T1 start_time_ticks pass-through-only
+    token untouched, so an honest endpoint checking the live process's actual
+    start time against it is guaranteed to observe a mismatch and refuse to
+    act. The manager never re-derives or refreshes this value after the real
+    detector first observed it, which is what makes an endpoint-side
+    T1 != T2 comparison meaningful. This security property is independent of
+    how the Alert was produced, so the bypass does not weaken this test's
+    conclusion -- only its claim to prove wire-ingest reachability."""
     agent_token = _enroll(client, "agent-kill-reuse", "HOST-KILL-REUSE")
     original_pid = 7788
     t1_original_process_start_time = 133_012_000_000_000_000

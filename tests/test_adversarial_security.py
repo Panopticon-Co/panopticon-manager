@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 
 import manager.db as db_module
+from tests.conftest import enroll_test_agent
 from tests.test_command_route import _enroll
 from tests.test_response_actions_route import _enroll_analyst, _stage_response_action
 
@@ -60,11 +61,7 @@ def test_re_enrolling_an_existing_agent_id_is_rejected_not_silently_overwritten(
     and functional."""
     original_token = _enroll(client, "agent-victim", "host-victim")
 
-    hijack = client.post(
-        "/api/v1/agents/enroll",
-        json={"agent_id": "agent-victim", "host_id": "host-attacker"},
-        headers={"X-Panopticon-Enrollment-Token": "test-bootstrap-token"},
-    )
+    hijack = enroll_test_agent(client, "agent-victim", "host-attacker")
     assert hijack.status_code == 409
 
     row = db_module.connect().execute(

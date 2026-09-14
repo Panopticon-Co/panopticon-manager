@@ -5,10 +5,101 @@ Last verified: 2026-09-14, against `panopticon-manager` @ `main` (commit
 pinned at `8b521aa`. Manager's full suite: **138 passed** (`pytest -v tests/`,
 the exact invocation `.github/workflows/ci.yml` runs).
 
+## Phase 14 addendum: what was actually run live, and two corrections
+
+A Phase 14 verification pass ran this pipeline against a **real** Manager
+process (uvicorn over genuine TLS with a self-signed demo certificate) and
+the **real** `panopticon-linux-agent` binary (built and executed inside a
+real Ubuntu 24.04 container, not a mock), plus a real local MSVC build of
+`panopticon-agent`. It reached further than this runbook's curl-simulated
+walkthrough in one respect and found two things this runbook previously got
+wrong:
+
+- **Enrollment, identity persistence, revocation, and durable replay-after-
+  revocation were all proven with the real Linux agent binary**, not curl:
+  first-run enrollment, a restart that reused the same identity without
+  re-enrolling, a live revocation (server-side `revoked_at`) that caused the
+  agent's subsequent authenticated telemetry to be genuinely rejected (401)
+  while the agent durably retained the undelivered events in its spool
+  instead of dropping them, and a legitimate re-enrollment under a fresh
+  `agent_id` that reclaimed the same `host_id` and successfully replayed the
+  previously-stuck spool contents once trust was restored.
+- **A real, agent-observed detection was also proven**: a genuine process
+  (`bash -c 'echo /dev/tcp/127.0.0.1/9; sleep 6'`, chosen to contain the
+  substring `/dev/tcp/` in its command line without ever actually opening a
+  socket) was launched, observed by the real agent's live `/proc` collector,
+  delivered over genuinely-verified TLS, and matched production rule
+  `DET-LNX-001` for a real `Alert` row — no crafted event, no bypass.
+- **A real QUARANTINE_FILE command was fully executed end-to-end by the real
+  agent binary**: dispatched via the raw command-token route (a direct
+  enqueue, not a rule match — see the correction below for why), the live
+  agent polled it, accepted it, moved a real disposable file into a real
+  quarantine directory, and reported a result that produced the full
+  `["created", "dispatched", "accepted", "result_received"]` audit trail and
+  a `SUCCEEDED` lifecycle state.
+- **Correction 1 — the curl payloads in Sections 5 and the crafted event in
+  "Trigger real production rule DET-INJ-001" above are not valid against the
+  current wire schema** (`manager/wire/telemetry.py`'s `TelemetryEvent`,
+  `extra="forbid"`): a real ingest call needs the full nested
+  `event`/`source`/`agent`/`host`/`user`/`process` shape, not the flat shape
+  shown above. The flat shape predates a schema tightening and was never
+  re-verified against a live call.
+- **Correction 2 (Phase 14, since fixed for one of the two rules in Phase
+  15) — `DET-INJ-001` and `DET-PERS-007` were not actually reachable
+  through a real `POST /api/v1/ingest` call**, contrary to this file's
+  earlier "TRUE-PRODUCTION-E2E" label for `QUARANTINE_FILE`. Root causes
+  turned out to be different for each rule:
+  - **`DET-PERS-007` (fixed in Phase 15).** The rule's own YAML declared
+    `event_type: file_write`, a value no real telemetry source ever
+    produces — real Sysmon Event ID 11 FileCreate observations (already
+    collected live by `panopticon-agent`'s
+    `sysmon_telemetry_decoder.cpp`) and `OfficerIngestionAdapter` both
+    synthesize `file_create`, exactly matching the already-correct sibling
+    rule `DET-FILE-001`. The fix was a one-line rule correction
+    (`event_type: file_write` -> `file_create`, eyedetect commit
+    `149003e`) — no adapter or wire-schema change was needed, since the
+    telemetry the adapter already produces was simply mislabeled in the
+    rule. Now genuinely proven reachable from the wire boundary by
+    `panopticon-manager/tests/test_real_ingest_detection_reachability.py`.
+  - **`DET-INJ-001` (still not reachable — this requires new telemetry
+    collection, out of scope for a rule/adapter fix).** Its
+    `injection_type`/`target_process`/`source_process` fields have no
+    place in the strict wire schema at all (`extra="forbid"`), and no
+    endpoint collector observes process injection in the first place —
+    `panopticon-agent`'s Sysmon decoder has no case for Event ID 8
+    (CreateRemoteThread) or 10 (ProcessAccess), and the Linux agent has no
+    equivalent mechanism either. Closing this gap means adding genuinely
+    new OS-level telemetry collection, not correcting a mapping.
+  Both rules were, and `DET-INJ-001` still is, genuinely exercised by
+  `tests/test_e2e_response_pipeline.py` only through `run.process_event(event)`
+  — an internal test helper that calls the same detection/response code
+  Manager runs in production, but bypasses the wire-schema/adapter layer
+  entirely. That inner path is real and unmocked; treat any claim that a
+  specific rule is "TRUE-PRODUCTION-E2E" as meaning "reachable via a real,
+  schema-valid `POST /api/v1/ingest`," and verify it the way this addendum
+  did, not by trusting the rule's own YAML label.
+- **Windows**: the real `officer-agent.exe` (rebuilt locally with MSVC,
+  11/11 CTest passing including `officer-keypair-tests`) could not reach
+  live enrollment in this environment because it refuses to proceed past
+  collector startup with zero working telemetry collectors
+  (`src/main.cpp`, `return 4` when `started == 0`), and both ETW
+  (`StartTraceW`) and the already-installed `Sysmon64` service
+  (`EvtSubscribe`) returned a real "Access is denied" without local
+  Administrator elevation or "Event Log Readers" membership, neither of
+  which this non-interactive session can grant itself. This is an honest
+  environment limitation, not a code defect — the same enrollment/identity
+  code underneath is already proven by CI and by 11/11 local CTest.
+
 This runbook reproduces the same real, unmodified pipeline that
-`tests/test_e2e_response_pipeline.py::test_kill_process_real_detector_recommendation_succeeds_with_a_true_production_path`
+`tests/test_e2e_response_pipeline.py::test_kill_process_real_detector_recommendation_succeeds_via_internal_detection_bypass`
 exercises automatically — the difference is you drive it by hand, over HTTP,
 against a running Manager process, so a panel can watch each stage happen.
+Note the corrected test name: per the Phase 15 addendum below, this
+particular scenario (DET-INJ-001 / process_injection) is proven at the
+internal detection-engine level, not through a real `POST /api/v1/ingest`
+call — the manual walkthrough here injects the same crafted event Manager
+would receive if a real endpoint could produce it, which today none can
+(see the addendum for why).
 
 ## What this demo honestly is (read this before promising anything to a panel)
 
@@ -58,12 +149,13 @@ From `panopticon-manager/`:
 ```bash
 export PANOPTICON_ENROLLMENT_TOKEN=demo-enrollment-secret
 export PANOPTICON_COMMAND_TOKEN=demo-command-secret
-export PANOPTICON_ANALYST_BOOTSTRAP_TOKEN=demo-analyst-bootstrap
+export PANOPTICON_ANALYST_ENROLLMENT_TOKEN=demo-analyst-bootstrap
 uvicorn manager.app:app --host 127.0.0.1 --port 8000
 ```
 
-(Check `manager/config.py` for the exact environment variable names this
-checkout expects — bootstrap tokens gate agent/analyst enrollment; a fresh
+(Check `manager/auth.py`/`manager/routers/response_actions.py` for the exact
+environment variable and header names this checkout expects — bootstrap
+tokens gate agent/analyst enrollment; a fresh
 SQLite DB is created and migrated automatically on first request.)
 
 Confirm it's up:
@@ -100,16 +192,49 @@ direct authenticated call to Manager (curl, below), by design (see
 
 ## 4. Enroll an agent and an analyst
 
+Phase 13 requires the agent to prove possession of a locally-generated
+ECDSA P-256 private key before Manager will issue it a bearer token — see
+`docs/adr/004-agent-enrollment-identity.md`. `openssl` stands in here for
+what the real agent's own key generation/signing does natively (Windows
+CNG / OpenSSL respectively):
+
 ```bash
+openssl ecparam -genkey -name prime256v1 -noout -out /tmp/demo-agent-key.pem
+
+NONCE=$(curl -s -X POST http://127.0.0.1:8000/api/v1/agents/enrollment-challenge | jq -r .nonce)
+# The last 65 bytes of a P-256 SubjectPublicKeyInfo are exactly the raw
+# uncompressed point (0x04 || X || Y) this contract expects.
+PUBLIC_KEY=$(openssl ec -in /tmp/demo-agent-key.pem -pubout -outform DER 2>/dev/null | tail -c 65 | base64 -w0)
+
+# The contract requires a raw 64-byte r||s ECDSA signature
+# (docs/adr/004-agent-enrollment-identity.md), not the variable-length DER
+# encoding `openssl dgst -sign` produces -- convert with the `cryptography`
+# package this repo already depends on (requirements.txt), the same way
+# tests/conftest.py::enroll_test_agent does.
+SIGNATURE=$(python3 - "$NONCE" <<'PY'
+import base64, sys
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, utils
+
+nonce = base64.b64decode(sys.argv[1])
+with open("/tmp/demo-agent-key.pem", "rb") as f:
+    key = serialization.load_pem_private_key(f.read(), password=None)
+der_signature = key.sign(nonce, ec.ECDSA(hashes.SHA256()))
+r, s = utils.decode_dss_signature(der_signature)
+raw_signature = r.to_bytes(32, "big") + s.to_bytes(32, "big")
+print(base64.b64encode(raw_signature).decode())
+PY
+)
+
 AGENT_TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/v1/agents/enroll \
   -H "Content-Type: application/json" \
   -H "X-Panopticon-Enrollment-Token: $PANOPTICON_ENROLLMENT_TOKEN" \
-  -d '{"agent_id": "demo-agent", "host_id": "DEMO-HOST"}' | jq -r .token)
+  -d "{\"agent_id\": \"demo-agent\", \"host_id\": \"DEMO-HOST\", \"public_key\": \"$PUBLIC_KEY\", \"nonce\": \"$NONCE\", \"signature\": \"$SIGNATURE\"}" | jq -r .access_token)
 
 ANALYST_TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/v1/analysts/enroll \
   -H "Content-Type: application/json" \
-  -H "X-Panopticon-Analyst-Bootstrap-Token: $PANOPTICON_ANALYST_BOOTSTRAP_TOKEN" \
-  -d '{"analyst_id": "demo-analyst"}' | jq -r .token)
+  -H "X-Panopticon-Analyst-Enrollment-Token: $PANOPTICON_ANALYST_ENROLLMENT_TOKEN" \
+  -d '{"analyst_id": "demo-analyst"}' | jq -r .access_token)
 
 echo "agent token:   $AGENT_TOKEN"
 echo "analyst token: $ANALYST_TOKEN"
@@ -119,42 +244,58 @@ echo "analyst token: $ANALYST_TOKEN"
 `manager/routers/response_actions.py` — confirm against this checkout if
 they've changed since this doc was last verified.)
 
-## 5. Trigger real production rule DET-INJ-001
+## 5. Trigger real production rule DET-PERS-007
 
-Post the same event shape the true-production-E2E test constructs
-(`tests/test_e2e_response_pipeline.py::_process_injection_event`):
+> This section previously demonstrated `DET-INJ-001` with a flat, simplified
+> event shape. Neither works against this checkout: the flat shape is
+> rejected by the strict wire schema, and `DET-INJ-001` cannot be reached by
+> any real ingest payload regardless of shape (see the Phase 15 correction
+> above). This section now uses `DET-PERS-007`, which a Phase 15 real-ingest
+> test (`tests/test_real_ingest_detection_reachability.py`) confirms actually
+> works end to end. To see the `DET-INJ-001`/`KILL_PROCESS` internal-only
+> path instead, run
+> `tests/test_e2e_response_pipeline.py::test_kill_process_real_detector_recommendation_succeeds_via_internal_detection_bypass`.
+
+Post a full, wire-schema-valid `TelemetryEvent` (`manager/wire/telemetry.py`)
+representing a real Sysmon Event ID 11 FileCreate observation in a Windows
+Startup folder — the exact shape `panopticon-agent`'s Sysmon collector
+produces, and the same shape
+`tests/test_real_ingest_detection_reachability.py` posts:
+
+NDJSON requires exactly one JSON object per line, so write it to a file
+first rather than pretty-printing it inline (a multi-line `--data-binary`
+body would be parsed as several invalid partial lines):
 
 ```bash
+cat > /tmp/demo-event.json <<'EOF'
+{"schema_version": "0.4", "event": {"id": "evt_9999999999999999999999999999999999999999999999999999999999999999", "category": "file", "type": "create", "timestamp": "2026-09-14T12:00:00.000Z"}, "source": {"kind": "sysmon", "provider": "Microsoft-Windows-Sysmon", "channel": "Microsoft-Windows-Sysmon/Operational", "record_id": 1}, "agent": {"id": "demo-agent", "version": "0.1.0"}, "host": {"id": "DEMO-HOST", "hostname": "DEMO-HOST", "os": {"name": "Windows 11 Pro", "build": "26100"}}, "user": {"name": null, "domain": null, "sid": null}, "process": {"entity_id": "proc_dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "pid": 6001, "name": "explorer.exe", "executable": "C:\\Windows\\explorer.exe", "command_line": "C:\\Windows\\explorer.exe", "start_time_ticks": null, "parent": {"entity_id": null, "pid": 600, "name": "userinit.exe"}, "hash": {"sha256": null}}, "file": {"operation": "create", "path": "C:\\Users\\victim\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\evil.exe", "target_path": null, "previous_path": null, "hash": {"sha256": null}}}
+EOF
+
 curl -s -X POST http://127.0.0.1:8000/api/v1/ingest \
   -H "Authorization: Bearer $AGENT_TOKEN" \
+  -H "X-Panopticon-Batch-Id: demo-batch-1" \
+  -H "X-Panopticon-Agent-Id: demo-agent" \
+  -H "X-Panopticon-Protocol: 1" \
   -H "Content-Type: application/x-ndjson" \
-  --data-binary '{
-    "schema_version": "0.4",
-    "event_id": "evt_9999999999999999999999999999999999999999999999999999999999999999",
-    "event_type": "process_injection",
-    "host_id": "DEMO-HOST",
-    "timestamp": "2026-09-14T12:00:00.000Z",
-    "process": {"pid": 4433, "start_time_ticks": 133012345670000000},
-    "source_process": {"name": "winword.exe", "pid": 5150},
-    "target_process": {"name": "lsass.exe", "pid": 4433},
-    "injection_type": "ProcessHollowing"
-  }'
+  --data-binary @/tmp/demo-event.json
 ```
 
 **Expected stage-by-stage output:**
 
 1. **Detection** — the worker's next poll cycle runs this event through the
-   real `RuleEvaluator`; `DET-INJ-001` matches (`target_process.name` in the
-   protected set, `injection_type: ProcessHollowing`).
-2. **Alert** — a row appears in `alerts` (`rule_id = 'DET-INJ-001'`). Verify:
+   real `RuleEvaluator`; `DET-PERS-007` matches (`file.path` under a Windows
+   Startup folder). The same event also legitimately matches `DET-FILE-001`
+   (a detection-only sibling rule, no `active_response`) — expect two alert
+   rows, not a bug.
+2. **Alert** — a row appears in `alerts` (`rule_id = 'DET-PERS-007'`). Verify:
    ```bash
    curl -s http://127.0.0.1:8000/api/v1/alerts \
-     -H "Authorization: Bearer $ANALYST_TOKEN" | jq '.[] | select(.rule_id=="DET-INJ-001")'
+     -H "Authorization: Bearer $ANALYST_TOKEN" | jq '.[] | select(.rule_id=="DET-PERS-007")'
    ```
 3. **Recommendation / Response Engine translation** — `response.on_alert_created`
    calls the real `translate_recommendation`, which maps the real
-   `ActiveResponseAction(action="TERMINATE_PROCESS", target_start_time_ticks=...)`
-   to a `KILL_PROCESS` recommendation. A `response_actions` row appears,
+   `ActiveResponseAction(action="QUARANTINE_FILE", target_file=...)` to a
+   `QUARANTINE_FILE` recommendation. A `response_actions` row appears,
    `lifecycle_state = PENDING`, `tier = ANALYST_APPROVAL`:
    ```bash
    curl -s http://127.0.0.1:8000/api/v1/response-actions \
@@ -170,9 +311,9 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/response-actions/$RESPONSE_ID/autho
 ```
 
 **Expected**: `200`, `lifecycle_state` -> `AUTHORIZED`, a `commands` row is
-created with `action = "KILL_PROCESS"` and
-`target = {"pid": 4433, "start_time_ticks": 133012345670000000}` — the
-same original tick value observed on the triggering event, never re-derived.
+created with `action = "QUARANTINE_FILE"` and
+`target = {"path": "C:\\Users\\victim\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\evil.exe"}` —
+the same original path observed on the triggering event, never re-derived.
 
 ## 7. Dispatch (agent poll)
 
@@ -181,7 +322,7 @@ curl -s http://127.0.0.1:8000/api/v1/agents/demo-agent/commands \
   -H "Authorization: Bearer $AGENT_TOKEN" | jq '.'
 ```
 
-**Expected**: one `KILL_PROCESS` command, `lifecycle_state` -> `DISPATCHED`,
+**Expected**: one `QUARANTINE_FILE` command, `lifecycle_state` -> `DISPATCHED`,
 carrying a `correlation_id` you'll need for the result below.
 
 ## 8. Acceptance
@@ -203,7 +344,7 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/agents/demo-agent/command-results \
     "result_id": "demo-result-1",
     "command_id": "'"$COMMAND_ID"'",
     "outcome": "succeeded",
-    "detail": "process terminated",
+    "detail": "file quarantined",
     "correlation_id": "<correlation_id from step 7>"
   }'
 ```
@@ -225,10 +366,17 @@ started in step 3.
 
 ## Optional: PID-reuse rejection scenario
 
-Repeat steps 5–7 with a fresh `event_id`/`host_id`/`agent_id`, but for step 9
-report a **failure** instead, exactly as
-`tests/test_kill_process_pid_reuse_is_rejected_on_a_true_production_path`
-does:
+This scenario is specific to process-identity-sensitive actions
+(`KILL_PROCESS`), not the file-based `QUARANTINE_FILE` walkthrough in
+Section 5 above, so it cannot be reproduced by repeating steps 5–7 verbatim
+— those now use `DET-PERS-007`, a file target with no PID at all. It is
+proven only at the internal detection-engine level by
+`tests/test_e2e_response_pipeline.py::test_kill_process_pid_reuse_is_rejected_via_internal_detection_bypass`
+(see the corrected KILL_PROCESS note above for why DET-INJ-001 cannot
+currently drive this live over HTTP). To reproduce the underlying security
+property manually against a `KILL_PROCESS` command obtained any other way
+(e.g. a raw `POST /api/v1/commands` via the command token), report a
+**failure** for step 9 instead of success:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/api/v1/agents/demo-agent-2/command-results \
@@ -284,15 +432,21 @@ payload.
   `custom_action` that reaches either mapping, so this scenario cannot be
   triggered by posting a real event to `/api/v1/ingest` today. Do not
   demonstrate this path as if a real detection produced it.
-- **`QUARANTINE_FILE`** is now a real, detection-triggered, TRUE-PRODUCTION-E2E
-  path: production rule `DET-PERS-007` (a `file_write` event under a Windows
-  Startup folder or a Linux `/etc/init.d`/`rc.local` path) sets
-  `active_response: QUARANTINE_FILE`, and
-  `tests/test_e2e_response_pipeline.py::test_quarantine_file_real_detector_recommendation_succeeds_on_a_true_production_path`
-  proves the full real chain through to a `SUCCEEDED` result and audit trail,
-  exactly like `KILL_PROCESS`. It can be demonstrated the same way as the
-  `KILL_PROCESS` scenario above, substituting a startup-folder file-write
-  event for the process-injection one.
+- **`QUARANTINE_FILE`** is now a real, detection-triggered,
+  **TRUE-PRODUCTION-E2E from the actual wire boundary** (Phase 15): production
+  rule `DET-PERS-007` (a `file_create` event under a Windows Startup folder
+  or a Linux `/etc/init.d`/`rc.local` path — corrected from the
+  wire-unreachable `file_write` this file previously described) sets
+  `active_response: QUARANTINE_FILE`. Two independent proofs exist:
+  `panopticon-manager/tests/test_real_ingest_detection_reachability.py::test_det_pers_007_is_reachable_through_real_post_ingest`
+  drives it through a real `POST /api/v1/ingest` call (no bypass), and
+  `tests/test_e2e_response_pipeline.py::test_quarantine_file_real_detector_recommendation_succeeds_via_internal_detection_bypass`
+  proves the full chain from an internally-injected event through to a
+  `SUCCEEDED` result and audit trail. It can be demonstrated live the same
+  way as the `KILL_PROCESS` scenario above, substituting a startup-folder
+  `file_create` event for the process-injection one — and unlike
+  `KILL_PROCESS`, that substitute event is now genuinely something a real
+  Windows agent's Sysmon collector can and does produce.
 - **`COLLECT_FILE`, `RELEASE_HOST_ISOLATION`** have no
   `response_engine.translate_recommendation` mapping at all (verified by
   reading `vendor/response_engine/response_engine/recommendation.py`) — they
@@ -313,10 +467,24 @@ payload.
 
 | Action | Status |
 |---|---|
-| `KILL_PROCESS` | TRUE-PRODUCTION-E2E |
+| `KILL_PROCESS` | See note below — not TRUE-PRODUCTION-E2E via `DET-INJ-001` |
 | `ISOLATE_HOST` | TRUE-PRODUCTION-E2E |
 | `QUARANTINE_FILE` | TRUE-PRODUCTION-E2E |
 | `COLLECT_PROCESS_INFO` | BOUNDARY-LEVEL / OPT-IN (implemented, contract-supported; no shipped rule opts in) |
 | `COLLECT_NETWORK_CONNECTIONS` | BOUNDARY-LEVEL / OPT-IN (implemented, contract-supported; no shipped rule opts in) |
 | `COLLECT_FILE` | CONTRACT-SUPPORTED, IMPLEMENTED on both endpoint agents, DETECTION-UNWIRED |
 | `RELEASE_HOST_ISOLATION` | ANALYST-INITIATED (intentionally never detection-triggered) |
+
+**`KILL_PROCESS` note (Phase 15):** this file and `docs/RESPONSE_ENGINE_STATE.md`
+previously called `KILL_PROCESS` TRUE-PRODUCTION-E2E on the strength of
+`DET-INJ-001`, which is now confirmed wire-unreachable (see Correction 2
+above) — that specific citation was wrong. Other real, shipped rules that
+also map to `active_response: TERMINATE_PROCESS` (e.g. `DET-CRED-001`,
+`DET-MALW-002`, `DET-LAT-003`) declare `event_type: process_create`, a
+value real telemetry genuinely produces, so `KILL_PROCESS` is plausibly
+reachable via one of those — but this was not verified with a real-ingest
+test in this phase (auditing all `TERMINATE_PROCESS`-mapped rules was out
+of scope for a fix targeted at `DET-INJ-001`/`DET-PERS-007`). Do not cite
+`KILL_PROCESS` as TRUE-PRODUCTION-E2E without a real-ingest test backing a
+specific rule, the same way `test_real_ingest_detection_reachability.py`
+now does for `DET-PERS-007`.
