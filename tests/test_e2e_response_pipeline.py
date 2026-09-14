@@ -7,33 +7,31 @@ Detection Engine -> Manager alert -> Response Engine -> authorization/policy ->
 typed command -> endpoint dispatch -> ACCEPTED -> execution -> typed result ->
 lifecycle update -> audit.
 
-Two gaps in the *real* detector's active-response vocabulary make two of the
-directive's named scenarios impossible to trigger from genuine eyedetect
-output today, both already documented and accepted at this exact boundary by
-tests/test_response_engine.py's test_on_alert_created_auto_safe_action_is_
-enqueued_immediately and test_on_alert_created_terminate_process_with_start_
-time_stages_kill_process_pending:
+As of the vendor/eyedetect pin update that brought in commit b2a02fe
+("thread process.start_time_ticks into TERMINATE_PROCESS recommendations",
+merged to eyedetect main in PR #11 / CORR-003), one of the two gaps this file
+used to document is closed: eyedetect's ActiveResponseAction now does carry
+target_start_time_ticks, sourced from event["process"]["start_time_ticks"],
+threaded through by ActiveResponseEngine.resolve_action for any rule whose
+YAML sets ``active_response: TERMINATE_PROCESS`` (e.g. real production rule
+DET-INJ-001, vendor/eyedetect/rules/process/DET-INJ-001_process_injection_
+hollowing.yaml). test_kill_process_real_detector_recommendation_succeeds_
+with_a_true_production_path below proves the full, real, unmodified chain --
+real YAML rule -> real RuleEvaluator -> real ActiveResponseEngine -> real
+Alert -> real AlertSink.emit -> real response.on_alert_created -> real
+translate_recommendation -> KILL_PROCESS command -> dispatch -> accept ->
+execution result -> audit -- with no monkeypatching and no hand-built
+ActiveResponseAction/Alert/recommendation anywhere in the chain.
 
-  * eyedetect's ActiveResponseEngine.resolve_action only ever emits
-    TERMINATE_PROCESS / BLOCK_FIREWALL_IP / ISOLATE_HOST -- there is no rule
-    or code path anywhere in vendor/eyedetect that recommends
-    COLLECT_PROCESS_INFO or COLLECT_NETWORK_CONNECTIONS, so the AUTO_SAFE
-    "safe collection" scenario can never be produced by the real detector.
-  * ActiveResponseAction (vendor/eyedetect/src/alerting/active_response.py)
-    has no target_start_time_ticks field at all, so translate_recommendation's
-    PID-reuse-safety gate (response_engine/recommendation.py) can never be
-    satisfied by real eyedetect output either -- every real TERMINATE_PROCESS
-    recommendation fails closed today (see test_kill_process_real_detector_
-    recommendation_fails_closed_without_start_time below, which proves this
-    against genuine engine output rather than assuming it).
-
-Per the operating directive, these are pre-existing eyedetect limitations,
-not this test's bug to fix by touching vendor/eyedetect -- both are recorded
-in docs/RESPONSE_ENGINE_STATE.md. The two scenarios plug in at the
-translate_recommendation boundary the existing unit tests already established
-as legitimate. Everything else here -- the DET-FREQ-001 threshold detection,
-the Alert, the response_actions row, the command, and the full dispatch/
-accept/result/audit lifecycle -- is the real, unmodified production path.
+One gap remains, unchanged: eyedetect's ActiveResponseEngine.resolve_action
+only ever emits TERMINATE_PROCESS / BLOCK_FIREWALL_IP / ISOLATE_HOST -- no
+rule or code path anywhere in vendor/eyedetect recommends COLLECT_PROCESS_INFO
+or COLLECT_NETWORK_CONNECTIONS, so the AUTO_SAFE "safe collection" scenario
+below still plugs in at the translate_recommendation boundary (a monkeypatch
+standing in for a real detector recommendation neither this Detection Engine
+version nor any of its rules currently produces). This is a pre-existing
+eyedetect limitation, not this test's bug to fix by touching vendor/eyedetect,
+and is recorded in docs/RESPONSE_ENGINE_STATE.md.
 """
 
 from __future__ import annotations
@@ -45,12 +43,50 @@ import pytest
 from fastapi.testclient import TestClient
 
 import manager.db as db_module
+from manager.config import _DEFAULT_RULES_DIR
 from manager.detection.factory import build_detection_run
 from tests.test_command_route import _enroll
 from tests.test_response_actions_route import _enroll_analyst
 
 _HOST_ID = "HOST-E2E"
 _GUID = "proc_" + "e" * 64
+
+
+def _process_injection_event(
+    *, pid: int, start_time_ticks: int, host_id: str = _HOST_ID
+) -> dict:
+    """A real event matching production rule DET-INJ-001's actual YAML logic
+    (target_process.name in {svchost.exe, lsass.exe, ...}, injection_type in
+    {ProcessHollowing, ...}) -- not a synthetic shortcut, the same shape the
+    Officer/eyedetect Schema 0.4 process_injection event_type carries."""
+    return {
+        "schema_version": "0.4",
+        "event_id": "evt_" + "9" * 64,
+        "event_type": "process_injection",
+        "host_id": host_id,
+        "timestamp": "2026-09-14T12:00:00.000Z",
+        "process": {"pid": pid, "start_time_ticks": start_time_ticks},
+        "source_process": {"name": "winword.exe", "pid": 5150},
+        "target_process": {"name": "lsass.exe", "pid": pid},
+        "injection_type": "ProcessHollowing",
+    }
+
+
+def _run_real_detector_event(tmp_path, event: dict, agent_id: str) -> None:
+    """Feeds one event through the real, unmodified DetectionRun/AlertSink
+    pipeline against the production rule set (vendor/eyedetect/rules, the same
+    84-rule set manager/config.py points production at), exactly the path
+    manager/detection/worker.py exercises -- minus the async queue."""
+    conn = db_module.connect()
+    run, sink, writer = build_detection_run(
+        conn, alerts_path=tmp_path / "e2e-kill-alerts.ndjson", rules_dir=_DEFAULT_RULES_DIR
+    )
+    try:
+        sink.agent_id = agent_id
+        run.process_event(event)
+        conn.commit()
+    finally:
+        writer.close()
 
 
 def _ransomware_burst_events(count: int = 5) -> list[dict]:
@@ -128,6 +164,192 @@ def test_kill_process_real_detector_recommendation_fails_closed_without_start_ti
     ).fetchone()
     assert row["lifecycle_state"] == "REJECTED"
     assert row["command_id"] is None
+
+
+def test_kill_process_real_detector_recommendation_succeeds_with_a_true_production_path(
+    client: TestClient, tmp_path
+) -> None:
+    """TRUE PRODUCTION PATH: a real process_injection event matching real
+    production rule DET-INJ-001 -> real RuleEvaluator match -> real
+    ActiveResponseEngine.resolve_action (TERMINATE_PROCESS, with genuine
+    target_start_time_ticks) -> real Alert -> real AlertSink.emit -> real
+    response.on_alert_created -> real (unmocked) translate_recommendation ->
+    KILL_PROCESS command -> dispatch -> ACCEPTED -> execution result ->
+    SUCCEEDED -> full audit trail. No ActiveResponseAction, Alert, or
+    recommendation is hand-constructed anywhere in this test."""
+    agent_token = _enroll(client, "agent-kill-prod", "HOST-KILL-PROD")
+    target_pid = 4433
+    target_start_time_ticks = 133_012_345_670_000_000
+    event = _process_injection_event(
+        pid=target_pid, start_time_ticks=target_start_time_ticks, host_id="HOST-KILL-PROD"
+    )
+    _run_real_detector_event(tmp_path, event, "agent-kill-prod")
+
+    conn = db_module.connect()
+    alert_row = conn.execute(
+        "SELECT alert_id FROM alerts WHERE agent_id = 'agent-kill-prod'"
+    ).fetchone()
+    assert alert_row is not None, "the real RuleEvaluator did not fire DET-INJ-001"
+    alert_id = str(alert_row["alert_id"])
+
+    response_row = conn.execute(
+        "SELECT response_id, lifecycle_state, action, tier FROM response_actions "
+        "WHERE alert_id = ?",
+        (alert_id,),
+    ).fetchone()
+    assert response_row is not None
+    assert response_row["action"] == "KILL_PROCESS"
+    assert response_row["tier"] == "ANALYST_APPROVAL"
+    assert response_row["lifecycle_state"] == "PENDING"
+    response_id = str(response_row["response_id"])
+
+    analyst_token = _enroll_analyst(client, "analyst-kill-prod")
+    authorized = client.post(
+        f"/api/v1/response-actions/{response_id}/authorize",
+        headers={"Authorization": f"Bearer {analyst_token}"},
+    )
+    assert authorized.status_code == 200
+    command_id = str(
+        conn.execute(
+            "SELECT command_id FROM response_actions WHERE response_id = ?", (response_id,)
+        ).fetchone()["command_id"]
+    )
+
+    command_row = conn.execute(
+        "SELECT command_json FROM commands WHERE command_id = ?", (command_id,)
+    ).fetchone()
+    queued_target = json.loads(str(command_row["command_json"]))["target"]
+    assert queued_target == {"pid": target_pid, "start_time_ticks": target_start_time_ticks}
+
+    headers = {"Authorization": f"Bearer {agent_token}"}
+    polled = client.get("/api/v1/agents/agent-kill-prod/commands", headers=headers)
+    dispatched = polled.json()["commands"]
+    assert len(dispatched) == 1 and dispatched[0]["action"] == "KILL_PROCESS"
+
+    accepted = client.post(
+        f"/api/v1/agents/agent-kill-prod/commands/{command_id}/accept", headers=headers
+    )
+    assert accepted.status_code == 200
+
+    result = client.post(
+        "/api/v1/agents/agent-kill-prod/command-results",
+        json={
+            "result_id": "result-kill-prod",
+            "command_id": command_id,
+            "outcome": "succeeded",
+            "detail": "process terminated",
+            "correlation_id": dispatched[0]["correlation_id"],
+        },
+        headers=headers,
+    )
+    assert result.status_code == 200
+
+    final = conn.execute(
+        "SELECT lifecycle_state FROM commands WHERE command_id = ?", (command_id,)
+    ).fetchone()
+    assert final["lifecycle_state"] == "SUCCEEDED"
+    audit_events = [
+        row["event"]
+        for row in conn.execute(
+            "SELECT event FROM command_audit WHERE command_id = ? ORDER BY occurred_at",
+            (command_id,),
+        ).fetchall()
+    ]
+    assert audit_events == ["created", "dispatched", "accepted", "result_received"]
+
+
+def test_kill_process_pid_reuse_is_rejected_on_a_true_production_path(
+    client: TestClient, tmp_path
+) -> None:
+    """PID REUSE SECURITY (real production path): a real DET-INJ-001 detection
+    authorizes a KILL_PROCESS command binding start_time_ticks=T1 for PID X.
+    Before the agent executes it, PID X is reused by an unrelated process
+    with a different start_time_ticks T2. The agent-side identity gate lives
+    in the endpoint, not the manager -- what the manager guarantees, and what
+    this test proves, is that the dispatched command still carries the
+    original T1 start_time_ticks pass-through-only token untouched, so an
+    honest endpoint checking the live process's actual start time against it
+    is guaranteed to observe a mismatch and refuse to act. The manager never
+    re-derives or refreshes this value after the real detector first observed
+    it, which is what makes an endpoint-side T1 != T2 comparison meaningful."""
+    agent_token = _enroll(client, "agent-kill-reuse", "HOST-KILL-REUSE")
+    original_pid = 7788
+    t1_original_process_start_time = 133_012_000_000_000_000
+    t2_reused_process_start_time = 133_012_999_999_999_999
+    assert t1_original_process_start_time != t2_reused_process_start_time
+
+    event = _process_injection_event(
+        pid=original_pid,
+        start_time_ticks=t1_original_process_start_time,
+        host_id="HOST-KILL-REUSE",
+    )
+    _run_real_detector_event(tmp_path, event, "agent-kill-reuse")
+
+    conn = db_module.connect()
+    alert_row = conn.execute(
+        "SELECT alert_id FROM alerts WHERE agent_id = 'agent-kill-reuse'"
+    ).fetchone()
+    response_row = conn.execute(
+        "SELECT response_id FROM response_actions WHERE alert_id = ?",
+        (str(alert_row["alert_id"]),),
+    ).fetchone()
+    analyst_token = _enroll_analyst(client, "analyst-kill-reuse")
+    client.post(
+        f"/api/v1/response-actions/{response_row['response_id']}/authorize",
+        headers={"Authorization": f"Bearer {analyst_token}"},
+    )
+    command_id = str(
+        conn.execute(
+            "SELECT command_id FROM response_actions WHERE response_id = ?",
+            (response_row["response_id"],),
+        ).fetchone()["command_id"]
+    )
+
+    # PID X has since exited and been reused by Process B (T2) before the
+    # agent polls -- the manager's dispatched target must still be T1, never
+    # silently re-resolved to whatever process now holds PID X.
+    headers = {"Authorization": f"Bearer {agent_token}"}
+    polled = client.get("/api/v1/agents/agent-kill-reuse/commands", headers=headers)
+    dispatched = polled.json()["commands"][0]
+    assert dispatched["target"]["pid"] == original_pid
+    assert dispatched["target"]["start_time_ticks"] == t1_original_process_start_time
+    assert dispatched["target"]["start_time_ticks"] != t2_reused_process_start_time
+
+    client.post(f"/api/v1/agents/agent-kill-reuse/commands/{command_id}/accept", headers=headers)
+
+    # The endpoint's own identity gate (see panopticon-agent's KILL_PROCESS
+    # handler) observes Process B's real start time (T2) != the command's
+    # bound T1 and refuses to terminate it -- reported here as a failed
+    # result, exactly as a real agent would report it, never a "succeeded".
+    result = client.post(
+        "/api/v1/agents/agent-kill-reuse/command-results",
+        json={
+            "result_id": "result-kill-reuse-rejected",
+            "command_id": command_id,
+            "outcome": "failed",
+            "detail": (
+                f"identity mismatch: live process start_time_ticks="
+                f"{t2_reused_process_start_time} != command target "
+                f"start_time_ticks={t1_original_process_start_time}; refusing to terminate"
+            ),
+            "correlation_id": dispatched["correlation_id"],
+        },
+        headers=headers,
+    )
+    assert result.status_code == 200
+
+    final = conn.execute(
+        "SELECT lifecycle_state FROM commands WHERE command_id = ?", (command_id,)
+    ).fetchone()
+    assert final["lifecycle_state"] == "FAILED"
+    audit_events = [
+        row["event"]
+        for row in conn.execute(
+            "SELECT event FROM command_audit WHERE command_id = ? ORDER BY occurred_at",
+            (command_id,),
+        ).fetchall()
+    ]
+    assert audit_events == ["created", "dispatched", "accepted", "result_received"]
 
 
 def test_safe_collection_auto_dispatches_without_analyst_action_and_succeeds(

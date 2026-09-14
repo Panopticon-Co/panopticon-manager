@@ -819,3 +819,98 @@ actual rule to opt in is separate, not-yet-requested scope.
   the VMware environment a teammate is preparing separately — see the
   "Remaining environment-validation checklist" this document should gain
   once every implementable-without-VMware item is exhausted.
+
+## Phase 8 completion: CORR-003 unblocked, KILL_PROCESS true production path proven
+
+The `BLOCKED, REQUIRES HUMAN DECISION` item above is resolved: the human
+merged `panopticon-detection-engine#11` and `panopticon-agent#4`
+(`mergedAt` 2026-09-14T00:03Z, both confirmed via
+`git merge-base --is-ancestor <mergeCommit> origin/main` — a real,
+fast-forward ancestry check, not just GitHub's UI state). Both merge commits
+are CI-green (`detection-engine` run 34791447192, `agent` run 34791466106).
+
+- **`vendor/eyedetect` bump: CODE-VERIFIED, CI-VERIFIED.** Re-pinned from
+  `3dc75d8` (the old, never-merged PR-branch-tip commit) to `98b1c18`
+  (the actual merge commit of PR #11 on `panopticon-detection-engine`'s real
+  `main`). `panopticon-detection-engine`'s own suite passes 173/175 (2
+  environment-only skips) at `98b1c18`, including
+  `test_certutil_chain_produces_three_alerts` and
+  `test_replay_produces_gate_a_and_b_alerts` — the exact two tests that
+  regressed against the old unmerged tip. Manager's full suite passes
+  138/138 (`pytest tests/`, matching CI's exact invocation) against the new
+  pin, up from 134 before this phase (the +4 are the 2
+  `COLLECT_PROCESS_INFO`/`COLLECT_NETWORK_CONNECTIONS` E2E tests already
+  added in the prior session, plus the 2 new true-production-path
+  `KILL_PROCESS` tests below). `ruff check .` clean.
+- **KILL_PROCESS TRUE-PRODUCTION-E2E, not boundary-level.** The gap this
+  document previously called "real, previously undocumented" — eyedetect's
+  `ActiveResponseAction` carrying no `target_start_time_ticks` field, so
+  every genuine `TERMINATE_PROCESS` recommendation failed closed — is
+  closed: `git log` on `panopticon-detection-engine` shows
+  `b2a02fe feat(active-response): thread process.start_time_ticks into
+  TERMINATE_PROCESS recommendations`, merged to main as part of PR #11,
+  now present at the updated pin.
+  `tests/test_e2e_response_pipeline.py::test_kill_process_real_detector_recommendation_succeeds_with_a_true_production_path`
+  proves the complete, real, unmodified chain with no hand-built
+  `ActiveResponseAction`/`Alert`/recommendation anywhere in it: a genuine
+  `process_injection` event, matched against real production rule
+  `DET-INJ-001` (loaded from `vendor/eyedetect/rules`, the same 84-rule set
+  `manager/config.py` points production at) by the real `RuleEvaluator`,
+  produces a real `ActiveResponseAction` via
+  `ActiveResponseEngine.resolve_action`, which becomes a real `Alert`,
+  emitted through the real `AlertSink.emit` -> `response.on_alert_created`
+  -> the real (unmocked) `translate_recommendation` -> a `KILL_PROCESS`
+  command -> analyst authorization -> dispatch -> agent poll -> accept ->
+  execution result -> `SUCCEEDED` -> full `command_audit` trail
+  (`created, dispatched, accepted, result_received`).
+  `test_kill_process_real_detector_recommendation_fails_closed_without_start_time`
+  (pre-existing) continues to prove the complementary fail-closed case
+  still holds when `start_time_ticks` is genuinely absent from the
+  triggering event.
+- **PID reuse safety, TRUE-PRODUCTION-E2E.**
+  `test_kill_process_pid_reuse_is_rejected_on_a_true_production_path` proves
+  that once the real detector's `KILL_PROCESS` command is dispatched with
+  `target_start_time_ticks=T1`, the Manager never re-resolves or refreshes
+  that value even after PID reuse — the dispatched command still carries the
+  original T1 pass-through-only token. An honest endpoint that checks the
+  live process's actual start time against T1 is therefore guaranteed to
+  observe `T1 != T2` and refuse to act; the test reports the resulting
+  `outcome: "failed"` exactly as a real agent would, and confirms the
+  Manager correctly resolves it to lifecycle state `FAILED` with a complete
+  audit trail rather than ever crediting a phantom termination. The
+  PID-reuse identity check itself is enforced agent-side (this was already
+  true and unchanged); what this test newly proves is that the Manager's
+  half of the contract — never mutating or re-deriving the bound
+  `start_time_ticks` after the real detector first observed it — holds on
+  the true production path, not just in `response_engine`'s unit tests.
+- **`COLLECT_PROCESS_INFO` / `COLLECT_NETWORK_CONNECTIONS`: status
+  unchanged, BOUNDARY-LEVEL, not TRUE-PRODUCTION-E2E.** Confirmed still
+  accurate after the pin bump: `vendor/eyedetect/src/pipeline_core.py` and
+  every rule YAML under `vendor/eyedetect/rules/` were re-checked at
+  `98b1c18`, and no rule or code path recommends either action — eyedetect's
+  `ActiveResponseEngine.resolve_action` only auto-fires
+  `TERMINATE_PROCESS`/`BLOCK_FIREWALL_IP`/`ISOLATE_HOST`; the
+  `COLLECT_PROCESS_INFO`/`COLLECT_NETWORK_CONNECTIONS` branches added
+  earlier this program exist and are reachable, but only via an explicit
+  `custom_action` no current rule sets. This is a real, pre-existing
+  eyedetect authoring gap, not a Manager/Response-Engine defect, and is not
+  in scope to fix by editing `vendor/eyedetect`.
+  `test_safe_collection_auto_dispatches_without_analyst_action_and_succeeds`
+  continues to plug in at the `translate_recommendation` boundary
+  (monkeypatched) for exactly this reason, and is labeled BOUNDARY-LEVEL,
+  not TRUE-PRODUCTION-E2E, deliberately.
+- **CI:** `panopticon-manager` has no open PR at the time of writing; these
+  changes were verified locally against CI's exact invocations
+  (`pytest tests/`, `ruff check .`) and are pending a real GitHub Actions
+  run on push. `panopticon-contracts`' fixture/lifecycle validation and its
+  `banned-execution-pattern-scan` job were both re-run locally against all
+  five implementer repos at their current HEADs (including the two
+  newly-merged repos) with a clean result, matching the last real CI run on
+  `panopticon-contracts` main (`b4a123e`, run 34774034342, success).
+- **Isolation/robustness regression:** not re-run this phase.
+  `panopticon-linux-agent` had no code or dependency change in this phase —
+  the eyedetect pin bump and the two new Manager-side tests do not touch
+  isolation, WFP/nftables, or the restart-recovery path — so the last
+  real-CI evidence (3/3 consecutive green runs after the stale-socket-file
+  fix) remains the current, valid evidence rather than being superseded or
+  re-verified here.
