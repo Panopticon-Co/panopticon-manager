@@ -87,6 +87,13 @@ class ProcessMeta(_Strict):
     name: NullableStr
     executable: NullableStr
     command_line: NullableStr
+    # Optional, nullable, non-negative -- mirrors event.schema.json's
+    # nullableStartTimeTicks exactly (an opaque OS-native process-creation
+    # token, never a duration/wall-clock value). Omitted here previously,
+    # meaning this "field-for-field identical" mirror silently disagreed
+    # with the canonical schema: extra="forbid" made this model reject any
+    # real event that carried the field the schema itself permits.
+    start_time_ticks: Optional[int] = Field(default=None, ge=0)
     parent: ParentMeta
     hash: HashMeta
 
