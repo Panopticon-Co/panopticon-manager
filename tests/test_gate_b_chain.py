@@ -89,6 +89,9 @@ def test_certutil_chain_produces_three_alerts(tmp_path: Path) -> None:
     # chain covers is in the evidence rather than flattened into one field.
     assert corr["mitre_technique"] == "T1071"
     evidence = json.loads(corr["alert_json"])["evidence"]
-    assert evidence["tactics_covered"] == ["Command and Control"]
+    # DET-PROC-003's own mitre.tactic is "Ingress Tool Transfer" (T1105);
+    # DET-NET-006's is "Command and Control" (T1071, the anchor). Both stages
+    # contribute a distinct tactic to the chain.
+    assert evidence["tactics_covered"] == ["Ingress Tool Transfer", "Command and Control"]
     assert "DET-PROC-003" in evidence["attack_chain"]
     assert "DET-NET-006" in evidence["attack_chain"]
