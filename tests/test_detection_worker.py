@@ -109,7 +109,7 @@ def test_claim_process_done_writes_alert(tmp_path: Path) -> None:
     _seed(conn, _raw_whoami(_evt_id("a")))
 
     w = _worker(tmp_path, db)
-    run, sink, writer = build_detection_run(
+    run, sink, writer, _context = build_detection_run(
         conn, alerts_path=tmp_path / "alerts.ndjson", rules_dir=_DEFAULT_RULES_DIR
     )
     try:
@@ -134,7 +134,7 @@ def test_one_poisoned_event_does_not_stop_the_loop(tmp_path: Path) -> None:
     _seed(conn, _raw_whoami(_evt_id("c"), pid=2), state="pending")  # healthy
 
     w = _worker(tmp_path, db)
-    run, sink, writer = build_detection_run(
+    run, sink, writer, _context = build_detection_run(
         conn, alerts_path=tmp_path / "alerts.ndjson", rules_dir=_DEFAULT_RULES_DIR
     )
     real = run.process_event
@@ -171,7 +171,7 @@ def test_stale_claim_reverts_and_reprocesses_without_duplicate_alert(tmp_path: P
     _seed(conn, _raw_whoami(_evt_id("d")), state="claimed", claimed_at=stale)
 
     w = _worker(tmp_path, db)
-    run, sink, writer = build_detection_run(
+    run, sink, writer, _context = build_detection_run(
         conn, alerts_path=tmp_path / "alerts.ndjson", rules_dir=_DEFAULT_RULES_DIR
     )
     try:

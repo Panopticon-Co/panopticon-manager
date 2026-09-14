@@ -20,15 +20,16 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import manager.vendor_path  # noqa: F401  (sys.path side effect, must precede src.* imports)
-from manager.detection.factory import build_detection_run
+import manager.vendor_path  # noqa: F401  (sys.path side effect, must precede engine imports)
+from manager.detection.factory import build_detection_run, prune_graph
 from manager.timeutil import iso_at, iso_now
-from src.ingestion.officer_adapter import OfficerIngestionAdapter
+from panopticon_detection.ingestion.officer_adapter import OfficerIngestionAdapter
 
 _log = logging.getLogger("manager.detection.worker")
 
 CLAIM_LIMIT = 256
 LEASE_SECONDS = 60
+PRUNE_EVERY_IDLE_ROUNDS = 60
 IDLE_SLEEP_SECONDS = 1.0
 
 
@@ -57,15 +58,28 @@ class DetectionWorker:
 
     def _run(self) -> None:
         conn = self.open_connection()
-        run, sink, writer = build_detection_run(
+        run, sink, writer, context = build_detection_run(
             conn, alerts_path=self._alerts_path, rules_dir=self._rules_dir
         )
         _log.info("detection worker started (rules=%s)", self._rules_dir)
         try:
             self.revert_stale_claims(conn)
+            idle_rounds = 0
             while not self._stop.is_set():
                 if self.run_once(conn, run, sink) == 0:
+                    # The provenance graph is in-memory and grows with every
+                    # event. There is no background scheduler here, so prune on
+                    # the idle path -- the same place the queue is quiet and the
+                    # same pattern expire_stale_response_actions uses.
+                    idle_rounds += 1
+                    if idle_rounds >= PRUNE_EVERY_IDLE_ROUNDS:
+                        idle_rounds = 0
+                        dropped = prune_graph(context)
+                        if dropped["edges_removed"] or dropped["processes_removed"]:
+                            _log.info("pruned provenance: %s", dropped)
                     self._stop.wait(IDLE_SLEEP_SECONDS)
+                else:
+                    idle_rounds = 0
         finally:
             writer.close()
             conn.close()

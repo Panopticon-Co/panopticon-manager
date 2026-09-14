@@ -46,7 +46,7 @@ def test_one_event_one_alert_row_and_one_ndjson_line(tmp_path: Path) -> None:
     conn = _db(tmp_path / "p.db")
     alerts_path = tmp_path / "alerts.ndjson"
 
-    run, sink, writer = build_detection_run(
+    run, sink, writer, _context = build_detection_run(
         conn, alerts_path=alerts_path, rules_dir=_DEFAULT_RULES_DIR
     )
     try:
@@ -75,8 +75,12 @@ def test_one_event_one_alert_row_and_one_ndjson_line(tmp_path: Path) -> None:
 def test_full_rule_set_loads(tmp_path: Path) -> None:
     """The whole pinned rule directory parses and validates (no RuleValidationError)."""
     conn = _db(tmp_path / "p.db")
-    run, _sink, writer = build_detection_run(
+    run, _sink, writer, _context = build_detection_run(
         conn, alerts_path=tmp_path / "a.ndjson", rules_dir=_DEFAULT_RULES_DIR
     )
     writer.close()
-    assert len(run.evaluator.rules) >= 80
+    # 57 after the provenance refactor removed 35 rules whose event_type no
+    # Panopticon agent emits. The engine's own CI gate
+    # (scripts/check_rule_sourcing.py) asserts every remaining rule is
+    # reachable, so this only guards against the directory failing to load.
+    assert len(run.evaluator.rules) >= 50

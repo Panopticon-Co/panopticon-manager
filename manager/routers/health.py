@@ -5,7 +5,7 @@ is up. Readiness (/readyz) additionally checks the database is reachable and
 migrated to the version this build expects, since that's the actual
 precondition for serving ingest/query traffic in later phases.
 
-Reuses HealthState and Metrics from the vendored engine (vendor/eyedetect/src/
+Reuses HealthState and Metrics from the vendored engine (vendor/eyedetect/panopticon_detection/
 reliability/{health,metrics}.py) rather than reinventing them — both are
 already dependency-free and general-purpose.
 """
@@ -16,10 +16,10 @@ import time
 
 from fastapi import APIRouter, Response
 
-import manager.vendor_path  # noqa: F401  (sys.path side effect, must precede src.* imports)
+import manager.vendor_path  # noqa: F401  (sys.path side effect, must precede engine imports)
 from manager import db, migrations
-from src.reliability.health import HealthState
-from src.reliability.metrics import Metrics
+from panopticon_detection.reliability.health import HealthState
+from panopticon_detection.reliability.metrics import Metrics
 
 router = APIRouter()
 

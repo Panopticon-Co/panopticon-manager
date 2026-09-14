@@ -88,8 +88,8 @@ def test_replay_produces_gate_a_and_b_alerts(
                     for ln in alerts_path.read_text().splitlines()
                     if ln.strip()
                 }
-            if {"DET-PROC-008", "DET-PROC-003", "DET-NET-006", "CORR-003"} <= got:
+            if {"DET-PROC-008", "DET-PROC-003", "DET-NET-006", "PROV-CAMPAIGN"} <= got:
                 break
             time.sleep(0.1)
 
-    assert {"DET-PROC-008", "DET-PROC-003", "DET-NET-006", "CORR-003"} <= got
+    assert {"DET-PROC-008", "DET-PROC-003", "DET-NET-006", "PROV-CAMPAIGN"} <= got
