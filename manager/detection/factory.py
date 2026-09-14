@@ -28,7 +28,8 @@ from typing import Any
 import manager.vendor_path  # noqa: F401  (sys.path side effect, must precede engine imports)
 from manager.detection import response
 from manager.detection.store import insert_alert
-from panopticon_detection.factory import DetectionContext, build_detection_run
+from panopticon_detection.factory import DetectionContext
+from panopticon_detection.factory import build_detection_run as build_engine_run
 from panopticon_detection.reliability.alert_sink import IncrementalAlertWriter
 
 # How much provenance history the graph keeps. A campaign traversal cannot
@@ -73,7 +74,7 @@ def build_detection_run(
     writer = IncrementalAlertWriter(Path(alerts_path))
     sink = AlertSink(conn, writer)
 
-    run, context = build_detection_run(
+    run, context = build_engine_run(
         Path(rules_dir),
         emit=sink.emit,
         retention=GRAPH_RETENTION,
