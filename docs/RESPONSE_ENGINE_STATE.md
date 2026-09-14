@@ -914,3 +914,51 @@ are CI-green (`detection-engine` run 34791447192, `agent` run 34791466106).
   real-CI evidence (3/3 consecutive green runs after the stale-socket-file
   fix) remains the current, valid evidence rather than being superseded or
   re-verified here.
+
+## P1 closure: QUARANTINE_FILE wiring and schema 0.4 compatibility
+
+Two genuine P1 correctness defects identified by a later readiness audit are
+now fixed and TRUE-PRODUCTION-E2E-verified:
+
+- **QUARANTINE_FILE dead-end (fixed).** Production rule `DET-PERS-007` set
+  `active_response: QUARANTINE_FILE`, but
+  `ActiveResponseEngine.resolve_action` (eyedetect) had no branch matching
+  that `custom_action`, so the recommendation vanished before it ever
+  reached `translate_recommendation`. Fixed in eyedetect commit `dcae72a`
+  (adds the missing `resolve_action` branch) and response-engine commit
+  `788f08a` (adds the matching `translate_recommendation` mapping to
+  `{"path": target_file}`). Both endpoint agents, the wire contract
+  (`command.schema.json`), and the Manager's authorization tier
+  (`ANALYST_APPROVAL`) already fully supported `QUARANTINE_FILE` — only the
+  detection-to-recommendation translation was missing. Proven end to end by
+  `tests/test_e2e_response_pipeline.py::test_quarantine_file_real_detector_recommendation_succeeds_on_a_true_production_path`:
+  real `DET-PERS-007` match → real `resolve_action` → real `Alert` → real
+  `AlertSink.emit` → real (unmocked) `translate_recommendation` →
+  `QUARANTINE_FILE` command → analyst authorization → dispatch → accept →
+  result → `SUCCEEDED` → full audit trail. Status: **TRUE-PRODUCTION-E2E**
+  (upgraded from UNSUPPORTED end-to-end).
+- **Schema 0.4 (Linux agent) compatibility (fixed).** eyedetect's
+  `OfficerIngestionAdapter.SUPPORTED_SCHEMA_VERSIONS` and
+  `src/ingestion/telemetry.SUPPORTED_SCHEMA_VERSIONS` were capped at
+  `("0.1", "0.2", "0.3")`, while `panopticon-agent/schema/event.schema.json`'s
+  own enum, `manager/routers/ingest.py`'s `_SUPPORTED_SCHEMA_VERSIONS`, and
+  `panopticon-diagrams`' validator all already treated `"0.4"` (the Linux
+  agent's schema version) as canonical. In practice a real 0.4 event was
+  still accepted via a duck-typing fallback (its wire envelope is
+  structurally identical to 0.2/0.3's), but the explicit acceptance list did
+  not say so. Fixed in eyedetect commit `9e79b55`, with regression coverage
+  using the exact wire shape `panopticon-linux-agent`'s
+  `serialize_canonical_process_ndjson` emits. Vendored pin bumped to
+  `9e79b55` in this repo.
+- **New finding, documented not fixed (out of this closure's scope):**
+  `OfficerIngestionAdapter.transform_officer_event`'s normalized `process`
+  dict does not carry `start_time_ticks` through from a raw officer-shaped
+  wire event (only the preserved `_raw_officer_event` copy retains it). The
+  TRUE-PRODUCTION-E2E tests are unaffected (they call `run.process_event` on
+  an already-normalized event and never exercise this function), but a real
+  telemetry event ingested through the actual `POST /api/v1/ingest` →
+  `DetectionWorker._normalize` → `transform_officer_event` path would lose
+  PID-reuse-safety data for any resulting `KILL_PROCESS` recommendation.
+  This affects both Windows (0.2/0.3) and Linux (0.4) officer-shaped
+  ingestion and needs its own fix-and-test cycle in eyedetect, not a rushed
+  patch here — tracked as a **known limitation**, not silently repaired.
