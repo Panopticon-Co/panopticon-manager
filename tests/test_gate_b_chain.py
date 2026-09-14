@@ -88,7 +88,7 @@ def test_certutil_chain_produces_three_alerts(tmp_path: Path) -> None:
     # anchored the search (DET-NET-006, T1071). The full set of techniques the
     # chain covers is in the evidence rather than flattened into one field.
     assert corr["mitre_technique"] == "T1071"
-    evidence = json.loads(corr["evidence"])
+    evidence = json.loads(corr["alert_json"])["evidence"]
     assert evidence["tactics_covered"] == ["Command and Control"]
     assert "DET-PROC-003" in evidence["attack_chain"]
     assert "DET-NET-006" in evidence["attack_chain"]
