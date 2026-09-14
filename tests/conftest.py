@@ -67,7 +67,7 @@ def enroll_test_agent(
     import base64
 
     from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.asymmetric import ec, utils
 
     challenge = client.post("/api/v1/agents/enrollment-challenge")
     assert challenge.status_code == 200, challenge.text
@@ -78,7 +78,11 @@ def enroll_test_agent(
     numbers = private_key.public_key().public_numbers()
     public_key_raw = b"\x04" + numbers.x.to_bytes(32, "big") + numbers.y.to_bytes(32, "big")
 
-    signature_raw = private_key.sign(nonce_raw, ec.ECDSA(hashes.SHA256()))
+    # cryptography's sign() returns DER; the wire contract uses the raw
+    # r||s format Windows CNG/OpenSSL low-level APIs natively produce.
+    signature_der = private_key.sign(nonce_raw, ec.ECDSA(hashes.SHA256()))
+    r, s = utils.decode_dss_signature(signature_der)
+    signature_raw = r.to_bytes(32, "big") + s.to_bytes(32, "big")
 
     return client.post(
         "/api/v1/agents/enroll",

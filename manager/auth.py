@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, utils
 from fastapi import HTTPException
 
 from manager import db
@@ -25,6 +25,8 @@ _log = logging.getLogger("manager.auth")
 _PUBLIC_KEY_RAW_LENGTH = 65
 _NONCE_RAW_LENGTH = 32
 _NONCE_TTL_SECONDS = 300
+# Raw IEEE P1363 / Windows CNG signature format: r (32 bytes) || s (32 bytes).
+_SIGNATURE_RAW_LENGTH = 64
 
 
 def _digest(token: str) -> str:
@@ -100,9 +102,14 @@ def _verify_proof_of_possession(public_key_b64: str, nonce_b64: str, signature_b
         )
     nonce_raw = _decode_b64(nonce_b64, "nonce")
     signature_raw = _decode_b64(signature_b64, "signature")
+    if len(signature_raw) != _SIGNATURE_RAW_LENGTH:
+        raise HTTPException(status_code=401, detail="signature must be a raw 64-byte r||s pair")
     try:
+        r = int.from_bytes(signature_raw[:32], "big")
+        s = int.from_bytes(signature_raw[32:], "big")
+        signature_der = utils.encode_dss_signature(r, s)
         public_key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), public_key_raw)
-        public_key.verify(signature_raw, nonce_raw, ec.ECDSA(hashes.SHA256()))
+        public_key.verify(signature_der, nonce_raw, ec.ECDSA(hashes.SHA256()))
     except (InvalidSignature, ValueError) as exc:
         _log.warning("enrollment proof-of-possession failed: %s", type(exc).__name__)
         raise HTTPException(status_code=401, detail="invalid proof of possession") from exc

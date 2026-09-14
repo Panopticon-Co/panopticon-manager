@@ -8,7 +8,7 @@ from __future__ import annotations
 import base64
 
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, utils
 from fastapi.testclient import TestClient
 
 from tests.conftest import enroll_test_agent
@@ -19,6 +19,12 @@ def _keypair():
     numbers = private_key.public_key().public_numbers()
     public_key_raw = b"\x04" + numbers.x.to_bytes(32, "big") + numbers.y.to_bytes(32, "big")
     return private_key, base64.b64encode(public_key_raw).decode("ascii")
+
+
+def _sign_raw(private_key, data: bytes) -> bytes:
+    """cryptography's sign() returns DER; the wire contract uses raw r||s."""
+    r, s = utils.decode_dss_signature(private_key.sign(data, ec.ECDSA(hashes.SHA256())))
+    return r.to_bytes(32, "big") + s.to_bytes(32, "big")
 
 
 def _challenge(client: TestClient) -> tuple[str, bytes]:
@@ -54,7 +60,7 @@ def test_invalid_signature_is_rejected(client: TestClient) -> None:
     nonce_b64, nonce_raw = _challenge(client)
     private_key, public_key_b64 = _keypair()
     # Sign the WRONG bytes -- simulates a forged/corrupted signature.
-    bad_signature = private_key.sign(b"not-the-real-nonce", ec.ECDSA(hashes.SHA256()))
+    bad_signature = _sign_raw(private_key, b"not-the-real-nonce")
     resp = _enroll_raw(
         client,
         public_key=public_key_b64,
@@ -73,7 +79,7 @@ def test_signature_from_a_different_keypair_than_the_declared_public_key_is_reje
     nonce_b64, nonce_raw = _challenge(client)
     _, declared_public_key_b64 = _keypair()  # attacker doesn't have this private key
     attacker_private_key, _ = _keypair()
-    forged_signature = attacker_private_key.sign(nonce_raw, ec.ECDSA(hashes.SHA256()))
+    forged_signature = _sign_raw(attacker_private_key, nonce_raw)
     resp = _enroll_raw(
         client,
         public_key=declared_public_key_b64,
@@ -87,7 +93,7 @@ def test_expired_or_never_issued_nonce_is_rejected(client: TestClient) -> None:
     private_key, public_key_b64 = _keypair()
     fake_nonce_raw = b"\x00" * 32
     fake_nonce_b64 = base64.b64encode(fake_nonce_raw).decode("ascii")
-    signature = private_key.sign(fake_nonce_raw, ec.ECDSA(hashes.SHA256()))
+    signature = _sign_raw(private_key, fake_nonce_raw)
     resp = _enroll_raw(
         client,
         public_key=public_key_b64,
@@ -102,7 +108,7 @@ def test_reused_nonce_is_rejected_the_second_time(client: TestClient) -> None:
     be replayable to enroll a second (or the same) identity."""
     nonce_b64, nonce_raw = _challenge(client)
     private_key, public_key_b64 = _keypair()
-    signature_raw = private_key.sign(nonce_raw, ec.ECDSA(hashes.SHA256()))
+    signature_raw = _sign_raw(private_key, nonce_raw)
     signature_b64 = base64.b64encode(signature_raw).decode("ascii")
 
     first = client.post(
@@ -157,7 +163,7 @@ def test_missing_public_key_is_rejected(client: TestClient) -> None:
 def test_unauthorized_enrollment_without_bootstrap_token_is_rejected(client: TestClient) -> None:
     nonce_b64, nonce_raw = _challenge(client)
     private_key, public_key_b64 = _keypair()
-    signature_raw = private_key.sign(nonce_raw, ec.ECDSA(hashes.SHA256()))
+    signature_raw = _sign_raw(private_key, nonce_raw)
     signature_b64 = base64.b64encode(signature_raw).decode("ascii")
     resp = client.post(
         "/api/v1/agents/enroll",

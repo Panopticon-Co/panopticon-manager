@@ -27,7 +27,7 @@ class EnrollmentRequest(BaseModel):
     host_id: str = Field(min_length=1, max_length=128)
     public_key: str = Field(min_length=60, max_length=100)
     nonce: str = Field(min_length=40, max_length=48)
-    signature: str = Field(min_length=16, max_length=120)
+    signature: str = Field(min_length=86, max_length=90)
 
 
 class EnrollmentResponse(BaseModel):
