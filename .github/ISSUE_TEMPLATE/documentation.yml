@@ -1,0 +1,23 @@
+name: Documentation
+description: Report an issue with README, ADRs, or other docs
+labels: ["documentation"]
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Location
+      placeholder: File and section, e.g. README.md#test, docs/RESPONSE_ENGINE_STATE.md
+    validations:
+      required: true
+  - type: textarea
+    id: issue
+    attributes:
+      label: What's wrong or missing?
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested fix
+    validations:
+      required: false

@@ -1,28 +1,41 @@
 name: Bug Report
-description: Report a false positive or engine issue in eyedetect
+description: Report a bug in panopticon-manager
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
-      value: Thanks for helping improve eyedetect!
+      value: Thanks for helping improve panopticon-manager!
   - type: textarea
     id: description
     attributes:
       label: Bug Description
-      description: What unexpected behavior or rule parsing error occurred?
+      description: What unexpected behavior occurred?
     validations:
       required: true
   - type: textarea
     id: reproduction
     attributes:
       label: Steps to Reproduce
-      description: CLI command or sample NDJSON event string.
+      description: Exact commands, request payloads, or config used.
     validations:
       required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+    validations:
+      required: false
   - type: input
     id: environment
     attributes:
       label: Environment Info
-      placeholder: OS (Linux/Windows/macOS), Python version, Panopticon Schema version
+      placeholder: OS, Python version, vendor/eyedetect and vendor/response_engine pinned commits (git submodule status)
     validations:
       required: false
+  - type: markdown
+    attributes:
+      value: |
+        If this is a security vulnerability (authorization bypass, token
+        handling, PID-reuse, or other authorization/dispatch boundary
+        issue), please do **not** file it here — see `SECURITY.md` and
+        report privately via GitHub Security Advisories instead.
