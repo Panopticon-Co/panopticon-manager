@@ -5,6 +5,81 @@ Last verified: 2026-09-14, against `panopticon-manager` @ `main` (commit
 pinned at `8b521aa`. Manager's full suite: **138 passed** (`pytest -v tests/`,
 the exact invocation `.github/workflows/ci.yml` runs).
 
+## Phase 14 addendum: what was actually run live, and two corrections
+
+A Phase 14 verification pass ran this pipeline against a **real** Manager
+process (uvicorn over genuine TLS with a self-signed demo certificate) and
+the **real** `panopticon-linux-agent` binary (built and executed inside a
+real Ubuntu 24.04 container, not a mock), plus a real local MSVC build of
+`panopticon-agent`. It reached further than this runbook's curl-simulated
+walkthrough in one respect and found two things this runbook previously got
+wrong:
+
+- **Enrollment, identity persistence, revocation, and durable replay-after-
+  revocation were all proven with the real Linux agent binary**, not curl:
+  first-run enrollment, a restart that reused the same identity without
+  re-enrolling, a live revocation (server-side `revoked_at`) that caused the
+  agent's subsequent authenticated telemetry to be genuinely rejected (401)
+  while the agent durably retained the undelivered events in its spool
+  instead of dropping them, and a legitimate re-enrollment under a fresh
+  `agent_id` that reclaimed the same `host_id` and successfully replayed the
+  previously-stuck spool contents once trust was restored.
+- **A real, agent-observed detection was also proven**: a genuine process
+  (`bash -c 'echo /dev/tcp/127.0.0.1/9; sleep 6'`, chosen to contain the
+  substring `/dev/tcp/` in its command line without ever actually opening a
+  socket) was launched, observed by the real agent's live `/proc` collector,
+  delivered over genuinely-verified TLS, and matched production rule
+  `DET-LNX-001` for a real `Alert` row — no crafted event, no bypass.
+- **A real QUARANTINE_FILE command was fully executed end-to-end by the real
+  agent binary**: dispatched via the raw command-token route (a direct
+  enqueue, not a rule match — see the correction below for why), the live
+  agent polled it, accepted it, moved a real disposable file into a real
+  quarantine directory, and reported a result that produced the full
+  `["created", "dispatched", "accepted", "result_received"]` audit trail and
+  a `SUCCEEDED` lifecycle state.
+- **Correction 1 — the curl payloads in Sections 5 and the crafted event in
+  "Trigger real production rule DET-INJ-001" above are not valid against the
+  current wire schema** (`manager/wire/telemetry.py`'s `TelemetryEvent`,
+  `extra="forbid"`): a real ingest call needs the full nested
+  `event`/`source`/`agent`/`host`/`user`/`process` shape, not the flat shape
+  shown above. The flat shape predates a schema tightening and was never
+  re-verified against a live call.
+- **Correction 2 — `DET-INJ-001` and `DET-PERS-007` are not actually
+  reachable through a real `POST /api/v1/ingest` call today**, contrary to
+  this file's earlier "TRUE-PRODUCTION-E2E" label for `QUARANTINE_FILE`.
+  `OfficerIngestionAdapter.transform_officer_event` (`vendor/eyedetect/src/
+  ingestion/officer_adapter.py`) synthesizes `event_type` as
+  `f"{category}_{etype}"` for anything that isn't a process start/stop, and
+  the wire schema's `FileMeta.operation` only permits `"create"`,
+  `"delete"`, `"rename"` — so a real `file` event can only ever produce
+  `file_create`/`file_delete`/`file_rename`, never the `file_write` that
+  `DET-PERS-007` requires. Likewise `DET-INJ-001`'s `injection_type`/
+  `target_process`/`source_process` fields have no place in the strict wire
+  schema at all (`extra="forbid"`) and cannot survive real ingest. Both
+  rules are genuinely exercised by `tests/test_e2e_response_pipeline.py`
+  only through `run.process_event(event)` — an internal test helper that
+  calls the same detection/response code Manager runs in production, but
+  bypasses the wire-schema/adapter layer entirely. That inner path is real
+  and unmocked; the outer, HTTP-reachable path to it is not currently wired
+  for these two rules. This is a pre-existing gap, not something Phase 13/14
+  introduced, and it was intentionally left unfixed here rather than patched
+  under a live-deployment task — it touches the vendored `eyedetect`
+  submodule's rule/adapter contract and deserves its own change. Treat any
+  future claim that a specific rule is "TRUE-PRODUCTION-E2E" as meaning
+  "reachable via a real, schema-valid `POST /api/v1/ingest`" and verify it
+  the way this addendum did, not by trusting the rule's own YAML label.
+- **Windows**: the real `officer-agent.exe` (rebuilt locally with MSVC,
+  11/11 CTest passing including `officer-keypair-tests`) could not reach
+  live enrollment in this environment because it refuses to proceed past
+  collector startup with zero working telemetry collectors
+  (`src/main.cpp`, `return 4` when `started == 0`), and both ETW
+  (`StartTraceW`) and the already-installed `Sysmon64` service
+  (`EvtSubscribe`) returned a real "Access is denied" without local
+  Administrator elevation or "Event Log Readers" membership, neither of
+  which this non-interactive session can grant itself. This is an honest
+  environment limitation, not a code defect — the same enrollment/identity
+  code underneath is already proven by CI and by 11/11 local CTest.
+
 This runbook reproduces the same real, unmodified pipeline that
 `tests/test_e2e_response_pipeline.py::test_kill_process_real_detector_recommendation_succeeds_with_a_true_production_path`
 exercises automatically — the difference is you drive it by hand, over HTTP,
