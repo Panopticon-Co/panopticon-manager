@@ -53,3 +53,41 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     # start on enter, worker stop on exit.
     with TestClient(app_module.app) as c:
         yield c
+
+
+def enroll_test_agent(
+    client: TestClient, agent_id: str, host_id: str, *, token: str = "test-bootstrap-token"
+):
+    """Performs a full, real Phase 13 enrollment round trip (challenge ->
+    locally-generated ECDSA P-256 keypair -> signed proof of possession ->
+    enroll) and returns the raw response, so callers can assert either
+    success (then read .json()["access_token"]) or a specific failure mode.
+    Every test that used to POST {"agent_id", "host_id"} directly needs this
+    now that the enrollment contract requires public_key/nonce/signature."""
+    import base64
+
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    challenge = client.post("/api/v1/agents/enrollment-challenge")
+    assert challenge.status_code == 200, challenge.text
+    nonce_b64 = challenge.json()["nonce"]
+    nonce_raw = base64.b64decode(nonce_b64)
+
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    numbers = private_key.public_key().public_numbers()
+    public_key_raw = b"\x04" + numbers.x.to_bytes(32, "big") + numbers.y.to_bytes(32, "big")
+
+    signature_raw = private_key.sign(nonce_raw, ec.ECDSA(hashes.SHA256()))
+
+    return client.post(
+        "/api/v1/agents/enroll",
+        json={
+            "agent_id": agent_id,
+            "host_id": host_id,
+            "public_key": base64.b64encode(public_key_raw).decode("ascii"),
+            "nonce": nonce_b64,
+            "signature": base64.b64encode(signature_raw).decode("ascii"),
+        },
+        headers={"X-Panopticon-Enrollment-Token": token},
+    )

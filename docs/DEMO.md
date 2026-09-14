@@ -100,11 +100,27 @@ direct authenticated call to Manager (curl, below), by design (see
 
 ## 4. Enroll an agent and an analyst
 
+Phase 13 requires the agent to prove possession of a locally-generated
+ECDSA P-256 private key before Manager will issue it a bearer token — see
+`docs/adr/004-agent-enrollment-identity.md`. `openssl` stands in here for
+what the real agent's own key generation/signing does natively (Windows
+CNG / OpenSSL respectively):
+
 ```bash
+openssl ecparam -genkey -name prime256v1 -noout -out /tmp/demo-agent-key.pem
+
+NONCE=$(curl -s -X POST http://127.0.0.1:8000/api/v1/agents/enrollment-challenge | jq -r .nonce)
+echo -n "$NONCE" | base64 -d > /tmp/nonce.bin
+openssl dgst -sha256 -sign /tmp/demo-agent-key.pem -out /tmp/sig.bin /tmp/nonce.bin
+SIGNATURE=$(base64 -w0 /tmp/sig.bin)
+# The last 65 bytes of a P-256 SubjectPublicKeyInfo are exactly the raw
+# uncompressed point (0x04 || X || Y) this contract expects.
+PUBLIC_KEY=$(openssl ec -in /tmp/demo-agent-key.pem -pubout -outform DER 2>/dev/null | tail -c 65 | base64 -w0)
+
 AGENT_TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/v1/agents/enroll \
   -H "Content-Type: application/json" \
   -H "X-Panopticon-Enrollment-Token: $PANOPTICON_ENROLLMENT_TOKEN" \
-  -d '{"agent_id": "demo-agent", "host_id": "DEMO-HOST"}' | jq -r .token)
+  -d "{\"agent_id\": \"demo-agent\", \"host_id\": \"DEMO-HOST\", \"public_key\": \"$PUBLIC_KEY\", \"nonce\": \"$NONCE\", \"signature\": \"$SIGNATURE\"}" | jq -r .access_token)
 
 ANALYST_TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/v1/analysts/enroll \
   -H "Content-Type: application/json" \

@@ -1052,3 +1052,21 @@ be coverage-chasing, not a real fix. The orphaned `EndpointRemediationEngine`
 vocabulary noted above is unchanged by this closure (still simulated-only,
 still not reconciled with the real Response Engine) — out of scope, not
 newly discovered.
+
+## Phase 13: agent enrollment cryptographic identity
+
+`manager/auth.enroll()` now requires ECDSA P-256 proof of possession, not
+just the shared bootstrap secret — see
+`docs/adr/004-agent-enrollment-identity.md` for the full design and threat
+model. Ongoing authenticated operations (telemetry, command polling, result
+submission) are unchanged: still the pre-existing bearer-token check. A
+concrete, previously-undiscovered gap was fixed alongside this: `host_id`
+had no uniqueness constraint at all, so an unrelated `agent_id` could
+previously enroll claiming an already-trusted endpoint's `host_id`
+verbatim; `enroll()` now rejects that (`409`) while still allowing a
+revoked endpoint's `host_id` to be legitimately re-enrolled under a fresh
+identity. Twelve adversarial tests
+(`tests/test_enrollment_identity.py`) cover valid enrollment, invalid/forged
+signatures, key substitution, nonce replay/expiry, missing fields,
+unauthorized bootstrap tokens, host_id takeover, and revoked-endpoint
+rejection.

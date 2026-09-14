@@ -204,6 +204,36 @@ def _migration_10(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_11(conn: sqlite3.Connection) -> None:
+    """Phase 13: cryptographic endpoint identity. ``public_key`` binds an
+    enrolled agent to the ECDSA P-256 keypair it generated locally and
+    proved possession of during enrollment (see docs/adr/004). NULL for rows
+    from before this migration (none should exist in a fresh dev DB, but a
+    long-lived deployment upgrading in place would have pre-Phase-13 rows;
+    those must simply never authenticate via signature-based paths, since
+    they have no key on file -- they keep working via the pre-existing
+    bearer-token check, which this migration does not touch or weaken).
+
+    ``enrollment_nonces`` implements one-time proof-of-possession challenges:
+    a nonce is minted by /enrollment-challenge, consumed exactly once by a
+    matching /enroll call (or never, if it expires or is abandoned), and is
+    never valid twice -- the concrete defense against replaying a captured
+    enrollment request.
+    """
+    conn.execute("ALTER TABLE enrolled_agents ADD COLUMN public_key TEXT")
+    conn.execute(
+        """
+        CREATE TABLE enrollment_nonces (
+            nonce TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            consumed_at TEXT
+        )
+        """
+    )
+    conn.execute("CREATE INDEX ix_enrollment_nonces_expires ON enrollment_nonces (expires_at)")
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -215,6 +245,7 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_8,
     _migration_9,
     _migration_10,
+    _migration_11,
 ]
 
 

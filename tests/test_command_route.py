@@ -2,13 +2,11 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
+from tests.conftest import enroll_test_agent
+
 
 def _enroll(client: TestClient, agent_id: str, host_id: str) -> str:
-    response = client.post(
-        "/api/v1/agents/enroll",
-        json={"agent_id": agent_id, "host_id": host_id},
-        headers={"X-Panopticon-Enrollment-Token": "test-bootstrap-token"},
-    )
+    response = enroll_test_agent(client, agent_id, host_id)
     assert response.status_code == 200
     return str(response.json()["access_token"])
 
@@ -23,11 +21,7 @@ def _queue(client: TestClient, command: dict) -> None:
 
 
 def test_closed_command_queue_requires_authorization_and_scopes_polling(client: TestClient) -> None:
-    enrollment = client.post(
-        "/api/v1/agents/enroll",
-        json={"agent_id": "agent-1", "host_id": "host-1"},
-        headers={"X-Panopticon-Enrollment-Token": "test-bootstrap-token"},
-    )
+    enrollment = enroll_test_agent(client, "agent-1", "host-1")
     assert enrollment.status_code == 200
     command = {
         "command_id": "cmd-1",
