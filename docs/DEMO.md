@@ -284,7 +284,16 @@ payload.
   `custom_action` that reaches either mapping, so this scenario cannot be
   triggered by posting a real event to `/api/v1/ingest` today. Do not
   demonstrate this path as if a real detection produced it.
-- **`COLLECT_FILE`, `QUARANTINE_FILE`, `RELEASE_HOST_ISOLATION`** have no
+- **`QUARANTINE_FILE`** is now a real, detection-triggered, TRUE-PRODUCTION-E2E
+  path: production rule `DET-PERS-007` (a `file_write` event under a Windows
+  Startup folder or a Linux `/etc/init.d`/`rc.local` path) sets
+  `active_response: QUARANTINE_FILE`, and
+  `tests/test_e2e_response_pipeline.py::test_quarantine_file_real_detector_recommendation_succeeds_on_a_true_production_path`
+  proves the full real chain through to a `SUCCEEDED` result and audit trail,
+  exactly like `KILL_PROCESS`. It can be demonstrated the same way as the
+  `KILL_PROCESS` scenario above, substituting a startup-folder file-write
+  event for the process-injection one.
+- **`COLLECT_FILE`, `RELEASE_HOST_ISOLATION`** have no
   `response_engine.translate_recommendation` mapping at all (verified by
   reading `vendor/response_engine/response_engine/recommendation.py`) — they
   can only be demonstrated by posting a raw, hand-crafted
