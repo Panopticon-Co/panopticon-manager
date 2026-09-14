@@ -301,12 +301,15 @@ reasoning from that repository's side.
   audit (`diff` exit 0) — re-diff before trusting this after any vendor bump.
 - **Detection recommendation**: `ActiveResponseAction` /
   `ActiveResponseEngine.resolve_action`, same file layout as Alert above.
-  Recommends exactly 3 actions today: `TERMINATE_PROCESS`,
-  `BLOCK_FIREWALL_IP`, `ISOLATE_HOST`. **As of `panopticon-detection-engine@
-  b2a02fe`, carries `target_start_time_ticks` (optional) when the triggering
-  event's `process.start_time_ticks` was present** — see item 0 above. The
-  vendored copy at `vendor/eyedetect` does not yet have this (see "Known
-  blockers").
+  **As of the detection/response contract hygiene closure below**, resolves
+  to one of `TERMINATE_PROCESS`, `COLLECT_PROCESS_INFO`,
+  `COLLECT_NETWORK_CONNECTIONS`, `QUARANTINE_FILE`, or `ISOLATE_HOST` (the
+  five closed-set-mappable recommendation strings); `BLOCK_FIREWALL_IP` is
+  still a string a rule or the internal C2 beacon detector can request, but
+  it now always fails closed (`resolve_action` no longer resolves it to
+  anything). Carries `target_start_time_ticks` (optional) when the
+  triggering event's `process.start_time_ticks` was present — see item 0
+  above.
 - **Typed command**: `manager/routers/commands.py`'s `Command` model — the
   closed 7-action `Literal` and per-action target schema (`{pid,
   start_time_ticks}` for process actions, `{path}` for file actions, empty
@@ -970,3 +973,82 @@ now fixed and TRUE-PRODUCTION-E2E-verified:
   existing TRUE-PRODUCTION-E2E tests, which call `DetectionRun.process_event`
   directly on an already-normalized event and never exercise
   `transform_officer_event` or `POST /api/v1/ingest` at all.
+
+## Detection/response contract hygiene closure
+
+A full source audit of every `active_response:` value across the 92-rule
+eyedetect corpus (not trusting the prior phase logs above at face value)
+found two categories of dishonest or unsafe response-capability claims and
+fixed both:
+
+- **Six non-closed-set rule values removed, not remapped.** 16 rules set
+  `active_response` to `REVOKE_USER_SESSIONS` (8), `LOCK_USER_ACCOUNT` (2),
+  `FORCE_PASSWORD_RESET` (2), `TERMINATE_POD_WORKLOAD` (2),
+  `REVOKE_CLOUD_ACCESS_KEY` (1), or `RESTRICT_BUCKET_PERMISSIONS` (1) — none
+  of which `ActiveResponseEngine.resolve_action` has ever had a branch for,
+  and none of which has a real endpoint capability or a
+  `translate_recommendation` mapping. These were **not** mapped onto an
+  unrelated closed-set action (e.g. `REVOKE_CLOUD_ACCESS_KEY` was not turned
+  into `ISOLATE_HOST`); the `active_response` field was removed from each
+  rule instead, leaving detection semantics completely unchanged. Fixed in
+  eyedetect commit `f86a8ce`.
+- **A real bug, not just stale metadata: `resolve_action`'s severity default
+  did not check whether the rule requested something else.**
+  `ActiveResponseEngine.resolve_action`'s `ISOLATE_HOST` branch read
+  `custom_action == "ISOLATE_HOST" or level >= 14` — the `level >= 14` half
+  applied unconditionally, regardless of `custom_action`. This meant any of
+  the 16 rules above with `level >= 14` (14 of the 16) were **not** actually
+  failing closed as the prior phase logs in this document assumed — they
+  were silently resolving to a real `ISOLATE_HOST` recommendation via this
+  fallback, bypassing whatever the rule's own (unsupported) `active_response`
+  requested. The same bug would have shadowed `QUARANTINE_FILE`/
+  `COLLECT_PROCESS_INFO`/`COLLECT_NETWORK_CONNECTIONS` for any rule using
+  those at `level >= 14` (none currently do, but nothing prevented it).
+  Fixed in eyedetect commit `33b72f8` by gating the severity default on
+  `custom_action is None`, matching the pattern the `TERMINATE_PROCESS`
+  branch already used. Regression coverage in
+  `tests/test_active_response_collect_actions.py::test_unsupported_active_response_fails_closed_even_at_isolate_host_severity`
+  and its two companion tests (vendored via eyedetect commit `62d336a`).
+- **`BLOCK_FIREWALL_IP` → `ISOLATE_HOST` opportunistic downgrade removed.**
+  5 rules (`DET-NET-003`, `DET-WEB-001`, `DET-LAT-004`, `DET-NET-008`,
+  `DET-WEB-003`) plus the internal C2 beacon detector's hardcoded
+  `custom_action="BLOCK_FIREWALL_IP"` call all fed into a
+  `response_engine.recommendation.translate_recommendation` branch that
+  silently substituted a real `ISOLATE_HOST` command (full host isolation)
+  for what eyedetect actually recommended (a narrow, IP-scoped block) — a
+  "locked decision" documented in `panopticon-contracts/docs/CONTRACT.md`
+  and `response-engine`'s own ADR-001, but the same category of dishonest,
+  unrelated-action substitution this closure's own directive explicitly
+  named as unacceptable (e.g. "`REVOKE_CLOUD_ACCESS_KEY` must NOT become
+  `ISOLATE_HOST`"). There is no per-IP firewall action in the closed set and
+  none was added; `translate_recommendation` now returns `None` for
+  `BLOCK_FIREWALL_IP`, exactly like any other unsupported action. The `active_response: BLOCK_FIREWALL_IP` field was removed from the 5 rule
+  files (detection semantics unchanged); the internal beacon detector's
+  alert now correctly carries no `active_response`. Fixed in eyedetect
+  commits `33b72f8`/`f86a8ce`, response-engine commit `cc61fcc`, and
+  documented in `panopticon-contracts` commit `629116b`. Vendored pins
+  bumped to eyedetect `62d336a` and response-engine `cc61fcc` in this repo.
+
+**Final response-action disposition** (see `docs/DEMO.md` for the full
+demo-facing matrix):
+
+| Action | Status |
+|---|---|
+| `KILL_PROCESS` | TRUE-PRODUCTION-E2E |
+| `ISOLATE_HOST` | TRUE-PRODUCTION-E2E |
+| `QUARANTINE_FILE` | TRUE-PRODUCTION-E2E |
+| `COLLECT_PROCESS_INFO` | IMPLEMENTED, CONTRACT-SUPPORTED, BOUNDARY-LEVEL / OPT-IN (no shipped rule opts in) |
+| `COLLECT_NETWORK_CONNECTIONS` | IMPLEMENTED, CONTRACT-SUPPORTED, BOUNDARY-LEVEL / OPT-IN (no shipped rule opts in) |
+| `COLLECT_FILE` | CONTRACT-SUPPORTED, IMPLEMENTED on both endpoint agents, DETECTION-UNWIRED (no `translate_recommendation` mapping, no rule requests it) |
+| `RELEASE_HOST_ISOLATION` | Intentionally analyst/operator-initiated only, by design — never detection-triggered |
+
+No shipped rule requests `COLLECT_PROCESS_INFO`/`COLLECT_NETWORK_CONNECTIONS`
+today; one was not manufactured purely to exercise the `AUTO_SAFE` path, per
+this closure's own instruction not to invent rule coverage for symmetry.
+`COLLECT_FILE` remains contract-supported and endpoint-implemented but with
+no detection mapping, for the same reason — no shipped rule has a
+semantically legitimate reason to request it today, and inventing one would
+be coverage-chasing, not a real fix. The orphaned `EndpointRemediationEngine`
+vocabulary noted above is unchanged by this closure (still simulated-only,
+still not reconciled with the real Response Engine) — out of scope, not
+newly discovered.

@@ -300,3 +300,23 @@ payload.
   `POST /api/v1/commands` directly (bypassing detection entirely), which
   `tests/test_response_contract.py` does for wire-schema validation. Do not
   claim these are detection-triggered in a live demo.
+- **`BLOCK_FIREWALL_IP`** (an eyedetect recommendation string, never a
+  closed-set action) has no mapping either, and deliberately so: an earlier
+  version of `translate_recommendation` "downgraded" it to a real
+  `ISOLATE_HOST` command, silently substituting full host isolation for a
+  narrow, IP-scoped block. That substitution was removed as an opportunistic,
+  unrelated-action mapping. A rule or the internal C2 beacon detector may
+  still request it, but no command is ever produced — do not demonstrate it
+  as if it isolates or blocks anything.
+
+### Final response-action disposition
+
+| Action | Status |
+|---|---|
+| `KILL_PROCESS` | TRUE-PRODUCTION-E2E |
+| `ISOLATE_HOST` | TRUE-PRODUCTION-E2E |
+| `QUARANTINE_FILE` | TRUE-PRODUCTION-E2E |
+| `COLLECT_PROCESS_INFO` | BOUNDARY-LEVEL / OPT-IN (implemented, contract-supported; no shipped rule opts in) |
+| `COLLECT_NETWORK_CONNECTIONS` | BOUNDARY-LEVEL / OPT-IN (implemented, contract-supported; no shipped rule opts in) |
+| `COLLECT_FILE` | CONTRACT-SUPPORTED, IMPLEMENTED on both endpoint agents, DETECTION-UNWIRED |
+| `RELEASE_HOST_ISOLATION` | ANALYST-INITIATED (intentionally never detection-triggered) |
