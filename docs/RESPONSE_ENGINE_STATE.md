@@ -950,15 +950,23 @@ now fixed and TRUE-PRODUCTION-E2E-verified:
   using the exact wire shape `panopticon-linux-agent`'s
   `serialize_canonical_process_ndjson` emits. Vendored pin bumped to
   `9e79b55` in this repo.
-- **New finding, documented not fixed (out of this closure's scope):**
-  `OfficerIngestionAdapter.transform_officer_event`'s normalized `process`
-  dict does not carry `start_time_ticks` through from a raw officer-shaped
-  wire event (only the preserved `_raw_officer_event` copy retains it). The
-  TRUE-PRODUCTION-E2E tests are unaffected (they call `run.process_event` on
-  an already-normalized event and never exercise this function), but a real
-  telemetry event ingested through the actual `POST /api/v1/ingest` →
-  `DetectionWorker._normalize` → `transform_officer_event` path would lose
-  PID-reuse-safety data for any resulting `KILL_PROCESS` recommendation.
-  This affects both Windows (0.2/0.3) and Linux (0.4) officer-shaped
-  ingestion and needs its own fix-and-test cycle in eyedetect, not a rushed
-  patch here — tracked as a **known limitation**, not silently repaired.
+- **Live-ingest identity gap — fixed, not merely documented.** The finding
+  originally noted here (`transform_officer_event` silently dropping
+  `start_time_ticks`) had a second, independent layer: this repo's own
+  `manager/wire/telemetry.TelemetryEvent.ProcessMeta` never declared
+  `start_time_ticks` either, so `POST /api/v1/ingest`'s own schema
+  validation (`extra="forbid"`) would have rejected a real event carrying it
+  regardless of the eyedetect-side fix. Both are now fixed: eyedetect commit
+  `b554b5d` (passes the field through) and this repo's commit `b73dcce`
+  (accepts it as an optional, nullable, non-negative field matching the
+  canonical schema). Proven **TRUE-PRODUCTION-E2E** by
+  `tests/test_e2e_response_pipeline.py::test_kill_process_true_live_ingest_preserves_pid_and_start_time_ticks`:
+  a real event posted to the real `POST /api/v1/ingest` route, processed by
+  the app's own background `DetectionWorker` thread (not test-driven),
+  matching real production rule `DET-MALW-001`, produces a `KILL_PROCESS`
+  command whose target is bit-for-bit equal to the original
+  `{pid, start_time_ticks}` — the first test in this repo to prove process
+  identity survives the actual wire ingestion path, as distinct from the
+  existing TRUE-PRODUCTION-E2E tests, which call `DetectionRun.process_event`
+  directly on an already-normalized event and never exercise
+  `transform_officer_event` or `POST /api/v1/ingest` at all.
