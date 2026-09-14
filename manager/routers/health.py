@@ -16,10 +16,10 @@ import time
 
 from fastapi import APIRouter, Response
 
-import manager.vendor_path  # noqa: F401  (sys.path side effect, must precede src.* imports)
+import manager.vendor_path  # noqa: F401  (sys.path side effect, must precede engine imports)
 from manager import db, migrations
-from src.reliability.health import HealthState
-from src.reliability.metrics import Metrics
+from panopticon_detection.reliability.health import HealthState
+from panopticon_detection.reliability.metrics import Metrics
 
 router = APIRouter()
 

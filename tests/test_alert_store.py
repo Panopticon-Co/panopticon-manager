@@ -12,10 +12,10 @@ import json
 import sqlite3
 from pathlib import Path
 
-import manager.vendor_path  # noqa: F401  (sys.path side effect before src.* import)
+import manager.vendor_path  # noqa: F401  (sys.path side effect before engine import)
 from manager import migrations
 from manager.detection.store import insert_alert
-from src.alerting.alert import Alert
+from panopticon_detection.alerting.alert import Alert
 
 
 def _db(path: Path) -> sqlite3.Connection:

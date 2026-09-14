@@ -345,7 +345,7 @@ def test_kill_process_real_detector_recommendation_fails_closed_without_start_ti
     the same fail-closed behavior test_on_alert_created_terminate_process_is_
     rejected_with_no_command exercises with a synthetic active_response, now
     proven against vendor/eyedetect's real ActiveResponseEngine output."""
-    from src.alerting.active_response import ActiveResponseEngine
+    from panopticon_detection.alerting.active_response import ActiveResponseEngine
 
     action = ActiveResponseEngine.resolve_action(
         level=13,
