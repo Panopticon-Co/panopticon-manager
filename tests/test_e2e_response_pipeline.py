@@ -125,6 +125,217 @@ def _run_real_detector_burst(tmp_path, agent_id: str) -> None:
         writer.close()
 
 
+@pytest.fixture()
+def production_rules_client(tmp_path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """Identical wiring to conftest.py's shared ``client`` fixture, except
+    PANOPTICON_RULES_DIR points at the full, real vendor/eyedetect production
+    rule set instead of the fast one-rule fixture directory. A true live-ingest
+    test needs the app's own background DetectionWorker thread (started by
+    manager.app's lifespan) to evaluate a real, unmodified production rule --
+    not a synthetic fixture rule -- against an event posted through the real
+    POST /api/v1/ingest route."""
+    monkeypatch.setenv("PANOPTICON_DB_PATH", str(tmp_path / "panopticon.db"))
+    monkeypatch.setenv("PANOPTICON_ALERTS_PATH", str(tmp_path / "alerts.ndjson"))
+    monkeypatch.setenv("PANOPTICON_RULES_DIR", str(_DEFAULT_RULES_DIR))
+    monkeypatch.setenv("PANOPTICON_ENROLLMENT_TOKEN", "test-bootstrap-token")
+    monkeypatch.setenv("PANOPTICON_COMMAND_TOKEN", "test-command-token")
+    monkeypatch.setenv("PANOPTICON_ANALYST_ENROLLMENT_TOKEN", "test-analyst-bootstrap-token")
+    import importlib
+
+    import manager.app as app_module
+    import manager.auth as auth_module
+    import manager.detection.factory as factory_module
+    import manager.detection.response as response_module
+    import manager.migrations as migrations_module
+    import manager.routers.alerts as alerts_module
+    import manager.routers.commands as commands_module
+    import manager.routers.enrollment as enrollment_module
+    import manager.routers.health as health_module
+    import manager.routers.ingest as ingest_module
+    import manager.routers.response_actions as response_actions_module
+
+    for mod in (
+        health_module,
+        ingest_module,
+        enrollment_module,
+        commands_module,
+        response_module,
+        response_actions_module,
+        alerts_module,
+        factory_module,
+        auth_module,
+        migrations_module,
+        db_module,
+        app_module,
+    ):
+        importlib.reload(mod)
+
+    with TestClient(app_module.app) as c:
+        yield c
+
+
+def _dual_extension_dropper_wire_event(
+    *, pid: int, start_time_ticks: int, host_id: str
+) -> dict:
+    """A real, wire-valid (manager/wire/telemetry.TelemetryEvent-conformant)
+    schema 0.4 event matching production rule DET-MALW-001's actual YAML logic
+    (process.name matching a dual-extension dropper pattern). schema_version
+    0.4 (Linux agent, linux_procfs source) is used deliberately, so this test
+    also re-proves live 0.4 ingestion end to end, not just 0.2/0.3."""
+    return {
+        "schema_version": "0.4",
+        "event": {
+            "id": "evt_" + "3" * 64,
+            "category": "process",
+            "type": "start",
+            "timestamp": "2026-09-14T12:00:00.000Z",
+        },
+        "source": {
+            "kind": "linux_procfs", "provider": "procfs", "channel": None, "record_id": None
+        },
+        "agent": {"id": "agent-live-ingest", "version": "1.0.0"},
+        "host": {"id": host_id, "hostname": host_id, "os": {"name": "Linux", "build": "6.8.0"}},
+        "user": {"name": None, "domain": None, "sid": None},
+        "process": {
+            "entity_id": "proc_" + "4" * 64,
+            "pid": pid,
+            "name": None,
+            "executable": "/home/victim/Downloads/invoice.pdf.exe",
+            "command_line": "/home/victim/Downloads/invoice.pdf.exe",
+            "start_time_ticks": start_time_ticks,
+            "parent": {"entity_id": None, "pid": 1, "name": None},
+            "hash": {"sha256": None},
+        },
+    }
+
+
+def test_kill_process_true_live_ingest_preserves_pid_and_start_time_ticks(
+    production_rules_client: TestClient, tmp_path
+) -> None:
+    """TRUE LIVE-INGEST PATH: a real event POSTed to /api/v1/ingest -> real
+    Manager schema validation (manager/wire/telemetry.TelemetryEvent, now
+    including start_time_ticks) -> real DetectionWorker background thread ->
+    real OfficerIngestionAdapter.transform_officer_event (now preserving
+    start_time_ticks) -> real RuleEvaluator match on production rule
+    DET-MALW-001 -> real ActiveResponseEngine.resolve_action -> real Alert ->
+    real AlertSink.emit -> real response.on_alert_created -> real (unmocked)
+    translate_recommendation -> KILL_PROCESS command -> analyst authorization
+    -> dispatch -> accept -> result -> SUCCEEDED -> full audit trail. Unlike
+    test_kill_process_real_detector_recommendation_succeeds_with_a_true_
+    production_path (which calls DetectionRun.process_event directly), this
+    test never touches the detection engine except through the real HTTP
+    ingest endpoint -- proving process identity (PID + start_time_ticks)
+    survives the actual wire path, not just the in-process engine call."""
+    client = production_rules_client
+    host_id = "HOST-LIVE-INGEST"
+    agent_token = _enroll(client, "agent-live-ingest", host_id)
+
+    target_pid = 7799
+    target_start_time_ticks = 133_099_887_766_554_433
+    event = _dual_extension_dropper_wire_event(
+        pid=target_pid, start_time_ticks=target_start_time_ticks, host_id=host_id
+    )
+
+    ingest_response = client.post(
+        "/api/v1/ingest",
+        content=json.dumps(event) + "\n",
+        headers={
+            "Content-Type": "application/x-ndjson",
+            "X-Panopticon-Batch-Id": "batch-live-ingest-001",
+            "X-Panopticon-Agent-Id": "agent-live-ingest",
+            "X-Panopticon-Protocol": "1",
+            "Authorization": f"Bearer {agent_token}",
+        },
+    )
+    assert ingest_response.status_code == 200
+    assert ingest_response.json()["accepted"] == 1
+
+    # The event now flows through the app's own real background
+    # DetectionWorker thread (manager/app.py's lifespan), not a test-driven
+    # call -- poll briefly rather than assuming a fixed delay.
+    import time
+
+    conn = db_module.connect()
+    alert_row = None
+    for _ in range(50):
+        alert_row = conn.execute(
+            "SELECT alert_id FROM alerts WHERE agent_id = 'agent-live-ingest'"
+        ).fetchone()
+        if alert_row is not None:
+            break
+        time.sleep(0.1)
+    assert alert_row is not None, "the real DetectionWorker did not process the live-ingested event"
+    alert_id = str(alert_row["alert_id"])
+
+    response_row = conn.execute(
+        "SELECT response_id, lifecycle_state, action, tier FROM response_actions "
+        "WHERE alert_id = ?",
+        (alert_id,),
+    ).fetchone()
+    assert response_row is not None
+    assert response_row["action"] == "KILL_PROCESS"
+    assert response_row["tier"] == "ANALYST_APPROVAL"
+    assert response_row["lifecycle_state"] == "PENDING"
+    response_id = str(response_row["response_id"])
+
+    analyst_token = _enroll_analyst(client, "analyst-live-ingest")
+    authorized = client.post(
+        f"/api/v1/response-actions/{response_id}/authorize",
+        headers={"Authorization": f"Bearer {analyst_token}"},
+    )
+    assert authorized.status_code == 200
+    command_id = str(
+        conn.execute(
+            "SELECT command_id FROM response_actions WHERE response_id = ?", (response_id,)
+        ).fetchone()["command_id"]
+    )
+
+    command_row = conn.execute(
+        "SELECT command_json FROM commands WHERE command_id = ?", (command_id,)
+    ).fetchone()
+    queued_target = json.loads(str(command_row["command_json"]))["target"]
+    # The exact identity assertion: not "is not None", but bit-for-bit equal
+    # to the value the wire event carried through ingest -> normalization ->
+    # detection -> recommendation -> command.
+    assert queued_target == {"pid": target_pid, "start_time_ticks": target_start_time_ticks}
+
+    headers = {"Authorization": f"Bearer {agent_token}"}
+    polled = client.get("/api/v1/agents/agent-live-ingest/commands", headers=headers)
+    dispatched = polled.json()["commands"]
+    assert len(dispatched) == 1 and dispatched[0]["action"] == "KILL_PROCESS"
+
+    accepted = client.post(
+        f"/api/v1/agents/agent-live-ingest/commands/{command_id}/accept", headers=headers
+    )
+    assert accepted.status_code == 200
+
+    result = client.post(
+        "/api/v1/agents/agent-live-ingest/command-results",
+        json={
+            "result_id": "result-live-ingest",
+            "command_id": command_id,
+            "outcome": "succeeded",
+            "detail": "process terminated",
+            "correlation_id": dispatched[0]["correlation_id"],
+        },
+        headers=headers,
+    )
+    assert result.status_code == 200
+
+    final = conn.execute(
+        "SELECT lifecycle_state FROM commands WHERE command_id = ?", (command_id,)
+    ).fetchone()
+    assert final["lifecycle_state"] == "SUCCEEDED"
+    audit_events = [
+        row["event"]
+        for row in conn.execute(
+            "SELECT event FROM command_audit WHERE command_id = ? ORDER BY occurred_at",
+            (command_id,),
+        ).fetchall()
+    ]
+    assert audit_events == ["created", "dispatched", "accepted", "result_received"]
+
+
 def test_kill_process_real_detector_recommendation_fails_closed_without_start_time(
     client: TestClient,
 ) -> None:
