@@ -890,9 +890,10 @@ are CI-green (`detection-engine` run 34791447192, `agent` run 34791466106).
   (pre-existing) continues to prove the complementary fail-closed case
   still holds when `start_time_ticks` is genuinely absent from the
   triggering event.
-- **PID reuse safety, TRUE-PRODUCTION-E2E.**
-  `test_kill_process_pid_reuse_is_rejected_on_a_true_production_path` proves
-  that once the real detector's `KILL_PROCESS` command is dispatched with
+- **PID reuse safety, proven via internal detection-engine bypass (not
+  wire-ingest E2E — same DET-INJ-001 reachability gap as above).**
+  `test_kill_process_pid_reuse_is_rejected_via_internal_detection_bypass`
+  proves that once the real detector's `KILL_PROCESS` command is dispatched with
   `target_start_time_ticks=T1`, the Manager never re-resolves or refreshes
   that value even after PID reuse — the dispatched command still carries the
   original T1 pass-through-only token. An honest endpoint that checks the

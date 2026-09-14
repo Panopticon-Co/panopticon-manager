@@ -226,42 +226,59 @@ echo "analyst token: $ANALYST_TOKEN"
 `manager/routers/response_actions.py` — confirm against this checkout if
 they've changed since this doc was last verified.)
 
-## 5. Trigger real production rule DET-INJ-001
+## 5. Trigger real production rule DET-PERS-007
 
-Post the same event shape the true-production-E2E test constructs
-(`tests/test_e2e_response_pipeline.py::_process_injection_event`):
+> This section previously demonstrated `DET-INJ-001` with a flat, simplified
+> event shape. Neither works against this checkout: the flat shape is
+> rejected by the strict wire schema, and `DET-INJ-001` cannot be reached by
+> any real ingest payload regardless of shape (see the Phase 15 correction
+> above). This section now uses `DET-PERS-007`, which a Phase 15 real-ingest
+> test (`tests/test_real_ingest_detection_reachability.py`) confirms actually
+> works end to end. To see the `DET-INJ-001`/`KILL_PROCESS` internal-only
+> path instead, run
+> `tests/test_e2e_response_pipeline.py::test_kill_process_real_detector_recommendation_succeeds_via_internal_detection_bypass`.
+
+Post a full, wire-schema-valid `TelemetryEvent` (`manager/wire/telemetry.py`)
+representing a real Sysmon Event ID 11 FileCreate observation in a Windows
+Startup folder — the exact shape `panopticon-agent`'s Sysmon collector
+produces, and the same shape
+`tests/test_real_ingest_detection_reachability.py` posts:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/api/v1/ingest \
   -H "Authorization: Bearer $AGENT_TOKEN" \
+  -H "X-Panopticon-Batch-Id: demo-batch-1" \
+  -H "X-Panopticon-Agent-Id: demo-agent" \
+  -H "X-Panopticon-Protocol: 1" \
   -H "Content-Type: application/x-ndjson" \
   --data-binary '{
     "schema_version": "0.4",
-    "event_id": "evt_9999999999999999999999999999999999999999999999999999999999999999",
-    "event_type": "process_injection",
-    "host_id": "DEMO-HOST",
-    "timestamp": "2026-09-14T12:00:00.000Z",
-    "process": {"pid": 4433, "start_time_ticks": 133012345670000000},
-    "source_process": {"name": "winword.exe", "pid": 5150},
-    "target_process": {"name": "lsass.exe", "pid": 4433},
-    "injection_type": "ProcessHollowing"
+    "event": {"id": "evt_9999999999999999999999999999999999999999999999999999999999999999", "category": "file", "type": "create", "timestamp": "2026-09-14T12:00:00.000Z"},
+    "source": {"kind": "sysmon", "provider": "Microsoft-Windows-Sysmon", "channel": "Microsoft-Windows-Sysmon/Operational", "record_id": 1},
+    "agent": {"id": "demo-agent", "version": "0.1.0"},
+    "host": {"id": "DEMO-HOST", "hostname": "DEMO-HOST", "os": {"name": "Windows 11 Pro", "build": "26100"}},
+    "user": {"name": null, "domain": null, "sid": null},
+    "process": {"entity_id": "proc_dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "pid": 6001, "name": "explorer.exe", "executable": "C:\\Windows\\explorer.exe", "command_line": "C:\\Windows\\explorer.exe", "start_time_ticks": null, "parent": {"entity_id": null, "pid": 600, "name": "userinit.exe"}, "hash": {"sha256": null}},
+    "file": {"operation": "create", "path": "C:\\Users\\victim\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\evil.exe", "target_path": null, "previous_path": null, "hash": {"sha256": null}}
   }'
 ```
 
 **Expected stage-by-stage output:**
 
 1. **Detection** — the worker's next poll cycle runs this event through the
-   real `RuleEvaluator`; `DET-INJ-001` matches (`target_process.name` in the
-   protected set, `injection_type: ProcessHollowing`).
-2. **Alert** — a row appears in `alerts` (`rule_id = 'DET-INJ-001'`). Verify:
+   real `RuleEvaluator`; `DET-PERS-007` matches (`file.path` under a Windows
+   Startup folder). The same event also legitimately matches `DET-FILE-001`
+   (a detection-only sibling rule, no `active_response`) — expect two alert
+   rows, not a bug.
+2. **Alert** — a row appears in `alerts` (`rule_id = 'DET-PERS-007'`). Verify:
    ```bash
    curl -s http://127.0.0.1:8000/api/v1/alerts \
-     -H "Authorization: Bearer $ANALYST_TOKEN" | jq '.[] | select(.rule_id=="DET-INJ-001")'
+     -H "Authorization: Bearer $ANALYST_TOKEN" | jq '.[] | select(.rule_id=="DET-PERS-007")'
    ```
 3. **Recommendation / Response Engine translation** — `response.on_alert_created`
    calls the real `translate_recommendation`, which maps the real
-   `ActiveResponseAction(action="TERMINATE_PROCESS", target_start_time_ticks=...)`
-   to a `KILL_PROCESS` recommendation. A `response_actions` row appears,
+   `ActiveResponseAction(action="QUARANTINE_FILE", target_file=...)` to a
+   `QUARANTINE_FILE` recommendation. A `response_actions` row appears,
    `lifecycle_state = PENDING`, `tier = ANALYST_APPROVAL`:
    ```bash
    curl -s http://127.0.0.1:8000/api/v1/response-actions \
@@ -277,9 +294,9 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/response-actions/$RESPONSE_ID/autho
 ```
 
 **Expected**: `200`, `lifecycle_state` -> `AUTHORIZED`, a `commands` row is
-created with `action = "KILL_PROCESS"` and
-`target = {"pid": 4433, "start_time_ticks": 133012345670000000}` — the
-same original tick value observed on the triggering event, never re-derived.
+created with `action = "QUARANTINE_FILE"` and
+`target = {"path": "C:\\Users\\victim\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\evil.exe"}` —
+the same original path observed on the triggering event, never re-derived.
 
 ## 7. Dispatch (agent poll)
 
@@ -288,7 +305,7 @@ curl -s http://127.0.0.1:8000/api/v1/agents/demo-agent/commands \
   -H "Authorization: Bearer $AGENT_TOKEN" | jq '.'
 ```
 
-**Expected**: one `KILL_PROCESS` command, `lifecycle_state` -> `DISPATCHED`,
+**Expected**: one `QUARANTINE_FILE` command, `lifecycle_state` -> `DISPATCHED`,
 carrying a `correlation_id` you'll need for the result below.
 
 ## 8. Acceptance
@@ -310,7 +327,7 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/agents/demo-agent/command-results \
     "result_id": "demo-result-1",
     "command_id": "'"$COMMAND_ID"'",
     "outcome": "succeeded",
-    "detail": "process terminated",
+    "detail": "file quarantined",
     "correlation_id": "<correlation_id from step 7>"
   }'
 ```
@@ -332,10 +349,17 @@ started in step 3.
 
 ## Optional: PID-reuse rejection scenario
 
-Repeat steps 5–7 with a fresh `event_id`/`host_id`/`agent_id`, but for step 9
-report a **failure** instead, exactly as
-`tests/test_kill_process_pid_reuse_is_rejected_on_a_true_production_path`
-does:
+This scenario is specific to process-identity-sensitive actions
+(`KILL_PROCESS`), not the file-based `QUARANTINE_FILE` walkthrough in
+Section 5 above, so it cannot be reproduced by repeating steps 5–7 verbatim
+— those now use `DET-PERS-007`, a file target with no PID at all. It is
+proven only at the internal detection-engine level by
+`tests/test_e2e_response_pipeline.py::test_kill_process_pid_reuse_is_rejected_via_internal_detection_bypass`
+(see the corrected KILL_PROCESS note above for why DET-INJ-001 cannot
+currently drive this live over HTTP). To reproduce the underlying security
+property manually against a `KILL_PROCESS` command obtained any other way
+(e.g. a raw `POST /api/v1/commands` via the command token), report a
+**failure** for step 9 instead of success:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/api/v1/agents/demo-agent-2/command-results \

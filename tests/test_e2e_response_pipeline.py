@@ -606,20 +606,25 @@ def test_quarantine_file_real_detector_recommendation_succeeds_via_internal_dete
     assert audit_events == ["created", "dispatched", "accepted", "result_received"]
 
 
-def test_kill_process_pid_reuse_is_rejected_on_a_true_production_path(
+def test_kill_process_pid_reuse_is_rejected_via_internal_detection_bypass(
     client: TestClient, tmp_path
 ) -> None:
-    """PID REUSE SECURITY (real production path): a real DET-INJ-001 detection
-    authorizes a KILL_PROCESS command binding start_time_ticks=T1 for PID X.
-    Before the agent executes it, PID X is reused by an unrelated process
-    with a different start_time_ticks T2. The agent-side identity gate lives
-    in the endpoint, not the manager -- what the manager guarantees, and what
-    this test proves, is that the dispatched command still carries the
-    original T1 start_time_ticks pass-through-only token untouched, so an
-    honest endpoint checking the live process's actual start time against it
-    is guaranteed to observe a mismatch and refuse to act. The manager never
-    re-derives or refreshes this value after the real detector first observed
-    it, which is what makes an endpoint-side T1 != T2 comparison meaningful."""
+    """PID REUSE SECURITY, via INTERNAL DETECTION-ENGINE BYPASS (not
+    wire-ingest E2E -- see the sibling KILL_PROCESS test above for why
+    DET-INJ-001 cannot be driven through real POST /api/v1/ingest today): a
+    DET-INJ-001 detection authorizes a KILL_PROCESS command binding
+    start_time_ticks=T1 for PID X. Before the agent executes it, PID X is
+    reused by an unrelated process with a different start_time_ticks T2. The
+    agent-side identity gate lives in the endpoint, not the manager -- what
+    the manager guarantees, and what this test proves, is that the dispatched
+    command still carries the original T1 start_time_ticks pass-through-only
+    token untouched, so an honest endpoint checking the live process's actual
+    start time against it is guaranteed to observe a mismatch and refuse to
+    act. The manager never re-derives or refreshes this value after the real
+    detector first observed it, which is what makes an endpoint-side
+    T1 != T2 comparison meaningful. This security property is independent of
+    how the Alert was produced, so the bypass does not weaken this test's
+    conclusion -- only its claim to prove wire-ingest reachability."""
     agent_token = _enroll(client, "agent-kill-reuse", "HOST-KILL-REUSE")
     original_pid = 7788
     t1_original_process_start_time = 133_012_000_000_000_000
