@@ -54,7 +54,9 @@ vendored engine, no second service, no microservice infrastructure.
 - **Telemetry ingestion** (`manager/routers/ingest.py`) — bearer-authenticated
   `POST /api/v1/ingest` from enrolled agents.
 - **Detection** (`manager/detection/`) — a worker that runs the vendored
-  `eyedetect` engine (84 MITRE-mapped rules as of the current pin) against
+  `eyedetect` engine (92 MITRE-mapped rules as of the current pin, verified
+  by loading `vendor/eyedetect/rules` through the production
+  `RuleEvaluator`) against
   ingested events and emits `Alert`s.
 - **Response translation and authorization** (`manager/detection/response.py`,
   `manager/routers/response_actions.py`) — new alerts are automatically
