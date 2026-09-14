@@ -2,7 +2,7 @@
 
 Two hand-built normalized events (certutil process-create, then that same
 process's outbound connection) must produce three alert rows: DET-PROC-003,
-DET-NET-006, and the CORR-003 correlated incident joining them by PID.
+DET-NET-006, and the PROV-CAMPAIGN incident joining them through the provenance graph.
 """
 
 from __future__ import annotations
@@ -75,8 +75,8 @@ def test_certutil_chain_produces_three_alerts(tmp_path: Path) -> None:
         writer.close()
 
     rule_ids = {r["rule_id"] for r in conn.execute("SELECT rule_id FROM alerts")}
-    assert {"DET-PROC-003", "DET-NET-006", "CORR-003"} <= rule_ids
+    assert {"DET-PROC-003", "DET-NET-006", "PROV-CAMPAIGN"} <= rule_ids
 
-    corr = conn.execute("SELECT * FROM alerts WHERE rule_id = 'CORR-003'").fetchone()
+    corr = conn.execute("SELECT * FROM alerts WHERE rule_id = 'PROV-CAMPAIGN'").fetchone()
     assert corr["mitre_technique"] == "T1105"
     assert corr["host_id"] == "HOST-B"

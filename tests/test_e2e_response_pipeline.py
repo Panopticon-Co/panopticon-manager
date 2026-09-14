@@ -14,7 +14,7 @@ used to document is closed: eyedetect's ActiveResponseAction now does carry
 target_start_time_ticks, sourced from event["process"]["start_time_ticks"],
 threaded through by ActiveResponseEngine.resolve_action for any rule whose
 YAML sets ``active_response: TERMINATE_PROCESS`` (e.g. real production rule
-DET-INJ-001, vendor/eyedetect/rules/process/DET-INJ-001_process_injection_
+DET-CRED-001, vendor/eyedetect/rules/credential_access/DET-CRED-001_sam_registry_hive_dump.yaml
 hollowing.yaml). test_kill_process_real_detector_recommendation_succeeds_
 with_a_true_production_path below proves the full, real, unmodified chain --
 real YAML rule -> real RuleEvaluator -> real ActiveResponseEngine -> real
@@ -55,20 +55,30 @@ _GUID = "proc_" + "e" * 64
 def _process_injection_event(
     *, pid: int, start_time_ticks: int, host_id: str = _HOST_ID
 ) -> dict:
-    """A real event matching production rule DET-INJ-001's actual YAML logic
-    (target_process.name in {svchost.exe, lsass.exe, ...}, injection_type in
-    {ProcessHollowing, ...}) -- not a synthetic shortcut, the same shape the
-    Officer/eyedetect Schema 0.4 process_injection event_type carries."""
+    """A real event matching production rule DET-CRED-001's actual YAML logic
+    (reg.exe saving an HKLM hive) -- not a synthetic shortcut, the same shape
+    a Schema 0.4 process_create event carries.
+
+    This previously used DET-INJ-001 and event_type "process_injection". That
+    rule was removed: no Panopticon agent emits that event_type, so it could
+    never fire outside a hand-built test event. DET-CRED-001 is an equivalent
+    substitute for this test's purpose -- a production credential-access rule
+    on a real event_type that recommends TERMINATE_PROCESS.
+    """
     return {
         "schema_version": "0.4",
         "event_id": "evt_" + "9" * 64,
-        "event_type": "process_injection",
+        "event_type": "process_create",
         "host_id": host_id,
         "timestamp": "2026-09-14T12:00:00.000Z",
-        "process": {"pid": pid, "start_time_ticks": start_time_ticks},
-        "source_process": {"name": "winword.exe", "pid": 5150},
-        "target_process": {"name": "lsass.exe", "pid": pid},
-        "injection_type": "ProcessHollowing",
+        "process": {
+            "pid": pid,
+            "name": "reg.exe",
+            "executable": "C:\\Windows\\System32\\reg.exe",
+            "command_line": "reg.exe save hklm\\sam C:\\temp\\sam.hiv",
+            "start_time_ticks": start_time_ticks,
+        },
+        "parent": {"pid": 5150, "name": "cmd.exe"},
     }
 
 
@@ -358,7 +368,7 @@ def test_kill_process_real_detector_recommendation_fails_closed_without_start_ti
     conn = db_module.connect()
     conn.execute(
         "INSERT INTO alerts (alert_id, rule_id, agent_id, created_at, alert_json) "
-        "VALUES ('ALT-KILL-REAL', 'DET-INJ-001', 'agent-kill-real', ?, '{}')",
+        "VALUES ('ALT-KILL-REAL', 'DET-CRED-001', 'agent-kill-real', ?, '{}')",
         (datetime.now(timezone.utc).isoformat(),),
     )
     conn.commit()
@@ -381,7 +391,7 @@ def test_kill_process_real_detector_recommendation_succeeds_via_internal_detecti
     client: TestClient, tmp_path
 ) -> None:
     """INTERNAL DETECTION-ENGINE INTEGRATION TEST, NOT wire-ingest E2E: a real
-    process_injection event matching real production rule DET-INJ-001 is fed
+    process_create event matching real production rule DET-CRED-001 is fed
     directly to DetectionRun.process_event() (see _run_real_detector_event),
     bypassing POST /api/v1/ingest and OfficerIngestionAdapter entirely -> real
     RuleEvaluator match -> real ActiveResponseEngine.resolve_action
@@ -390,16 +400,17 @@ def test_kill_process_real_detector_recommendation_succeeds_via_internal_detecti
     translate_recommendation -> KILL_PROCESS command -> dispatch -> ACCEPTED
     -> execution result -> SUCCEEDED -> full audit trail. No
     ActiveResponseAction, Alert, or recommendation is hand-constructed
-    anywhere in this test -- but this is NOT proof that a real endpoint event
-    can reach DET-INJ-001 through the actual wire/ingestion boundary. As of
-    the Phase 15 investigation, it genuinely cannot: DET-INJ-001 requires
-    injection_type/target_process/source_process fields that have no place in
-    the strict wire schema (manager/wire/telemetry.py, extra="forbid"), and no
-    endpoint collector (Windows Sysmon/ETW or Linux /proc) currently observes
-    process injection (CreateRemoteThread, ProcessAccess, or equivalent) at
-    all. See docs/RESPONSE_ENGINE_STATE.md for the full analysis; closing that
-    gap requires new telemetry collection, out of scope for a rule-mapping
-    fix. This test still has value: it proves the KILL_PROCESS response/
+    anywhere in this test.
+
+    This previously used DET-INJ-001, and the Phase 15 investigation recorded
+    that it could not be driven through real POST /api/v1/ingest: it required
+    injection_type/target_process/source_process fields with no place in the
+    strict wire schema (manager/wire/telemetry.py, extra="forbid"), and no
+    endpoint collector observes process injection at all. The engine has since
+    removed that rule for exactly this reason. DET-CRED-001 replaces it here --
+    a process_create rule on real, collected telemetry -- so the wire-boundary
+    caveat no longer applies to this test, though it still bypasses ingest for
+    speed. This test proves the KILL_PROCESS response/
     dispatch/execution/audit machinery is correct once an Alert exists,
     independent of how that Alert was produced."""
     agent_token = _enroll(client, "agent-kill-prod", "HOST-KILL-PROD")
@@ -414,7 +425,7 @@ def test_kill_process_real_detector_recommendation_succeeds_via_internal_detecti
     alert_row = conn.execute(
         "SELECT alert_id FROM alerts WHERE agent_id = 'agent-kill-prod'"
     ).fetchone()
-    assert alert_row is not None, "the real RuleEvaluator did not fire DET-INJ-001"
+    assert alert_row is not None, "the real RuleEvaluator did not fire DET-CRED-001"
     alert_id = str(alert_row["alert_id"])
 
     response_row = conn.execute(
@@ -609,10 +620,10 @@ def test_quarantine_file_real_detector_recommendation_succeeds_via_internal_dete
 def test_kill_process_pid_reuse_is_rejected_via_internal_detection_bypass(
     client: TestClient, tmp_path
 ) -> None:
-    """PID REUSE SECURITY, via INTERNAL DETECTION-ENGINE BYPASS (not
-    wire-ingest E2E -- see the sibling KILL_PROCESS test above for why
-    DET-INJ-001 cannot be driven through real POST /api/v1/ingest today): a
-    DET-INJ-001 detection authorizes a KILL_PROCESS command binding
+    """PID REUSE SECURITY, via INTERNAL DETECTION-ENGINE BYPASS (bypasses the
+    wire boundary for speed, not because the rule is unreachable -- see the
+    sibling KILL_PROCESS test above): a
+    DET-CRED-001 detection authorizes a KILL_PROCESS command binding
     start_time_ticks=T1 for PID X. Before the agent executes it, PID X is
     reused by an unrelated process with a different start_time_ticks T2. The
     agent-side identity gate lives in the endpoint, not the manager -- what
