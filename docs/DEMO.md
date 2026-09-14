@@ -44,30 +44,40 @@ wrong:
   `event`/`source`/`agent`/`host`/`user`/`process` shape, not the flat shape
   shown above. The flat shape predates a schema tightening and was never
   re-verified against a live call.
-- **Correction 2 — `DET-INJ-001` and `DET-PERS-007` are not actually
-  reachable through a real `POST /api/v1/ingest` call today**, contrary to
-  this file's earlier "TRUE-PRODUCTION-E2E" label for `QUARANTINE_FILE`.
-  `OfficerIngestionAdapter.transform_officer_event` (`vendor/eyedetect/src/
-  ingestion/officer_adapter.py`) synthesizes `event_type` as
-  `f"{category}_{etype}"` for anything that isn't a process start/stop, and
-  the wire schema's `FileMeta.operation` only permits `"create"`,
-  `"delete"`, `"rename"` — so a real `file` event can only ever produce
-  `file_create`/`file_delete`/`file_rename`, never the `file_write` that
-  `DET-PERS-007` requires. Likewise `DET-INJ-001`'s `injection_type`/
-  `target_process`/`source_process` fields have no place in the strict wire
-  schema at all (`extra="forbid"`) and cannot survive real ingest. Both
-  rules are genuinely exercised by `tests/test_e2e_response_pipeline.py`
-  only through `run.process_event(event)` — an internal test helper that
-  calls the same detection/response code Manager runs in production, but
-  bypasses the wire-schema/adapter layer entirely. That inner path is real
-  and unmocked; the outer, HTTP-reachable path to it is not currently wired
-  for these two rules. This is a pre-existing gap, not something Phase 13/14
-  introduced, and it was intentionally left unfixed here rather than patched
-  under a live-deployment task — it touches the vendored `eyedetect`
-  submodule's rule/adapter contract and deserves its own change. Treat any
-  future claim that a specific rule is "TRUE-PRODUCTION-E2E" as meaning
-  "reachable via a real, schema-valid `POST /api/v1/ingest`" and verify it
-  the way this addendum did, not by trusting the rule's own YAML label.
+- **Correction 2 (Phase 14, since fixed for one of the two rules in Phase
+  15) — `DET-INJ-001` and `DET-PERS-007` were not actually reachable
+  through a real `POST /api/v1/ingest` call**, contrary to this file's
+  earlier "TRUE-PRODUCTION-E2E" label for `QUARANTINE_FILE`. Root causes
+  turned out to be different for each rule:
+  - **`DET-PERS-007` (fixed in Phase 15).** The rule's own YAML declared
+    `event_type: file_write`, a value no real telemetry source ever
+    produces — real Sysmon Event ID 11 FileCreate observations (already
+    collected live by `panopticon-agent`'s
+    `sysmon_telemetry_decoder.cpp`) and `OfficerIngestionAdapter` both
+    synthesize `file_create`, exactly matching the already-correct sibling
+    rule `DET-FILE-001`. The fix was a one-line rule correction
+    (`event_type: file_write` -> `file_create`, eyedetect commit
+    `149003e`) — no adapter or wire-schema change was needed, since the
+    telemetry the adapter already produces was simply mislabeled in the
+    rule. Now genuinely proven reachable from the wire boundary by
+    `panopticon-manager/tests/test_real_ingest_detection_reachability.py`.
+  - **`DET-INJ-001` (still not reachable — this requires new telemetry
+    collection, out of scope for a rule/adapter fix).** Its
+    `injection_type`/`target_process`/`source_process` fields have no
+    place in the strict wire schema at all (`extra="forbid"`), and no
+    endpoint collector observes process injection in the first place —
+    `panopticon-agent`'s Sysmon decoder has no case for Event ID 8
+    (CreateRemoteThread) or 10 (ProcessAccess), and the Linux agent has no
+    equivalent mechanism either. Closing this gap means adding genuinely
+    new OS-level telemetry collection, not correcting a mapping.
+  Both rules were, and `DET-INJ-001` still is, genuinely exercised by
+  `tests/test_e2e_response_pipeline.py` only through `run.process_event(event)`
+  — an internal test helper that calls the same detection/response code
+  Manager runs in production, but bypasses the wire-schema/adapter layer
+  entirely. That inner path is real and unmocked; treat any claim that a
+  specific rule is "TRUE-PRODUCTION-E2E" as meaning "reachable via a real,
+  schema-valid `POST /api/v1/ingest`," and verify it the way this addendum
+  did, not by trusting the rule's own YAML label.
 - **Windows**: the real `officer-agent.exe` (rebuilt locally with MSVC,
   11/11 CTest passing including `officer-keypair-tests`) could not reach
   live enrollment in this environment because it refuses to proceed past
@@ -81,9 +91,15 @@ wrong:
   code underneath is already proven by CI and by 11/11 local CTest.
 
 This runbook reproduces the same real, unmodified pipeline that
-`tests/test_e2e_response_pipeline.py::test_kill_process_real_detector_recommendation_succeeds_with_a_true_production_path`
+`tests/test_e2e_response_pipeline.py::test_kill_process_real_detector_recommendation_succeeds_via_internal_detection_bypass`
 exercises automatically — the difference is you drive it by hand, over HTTP,
 against a running Manager process, so a panel can watch each stage happen.
+Note the corrected test name: per the Phase 15 addendum below, this
+particular scenario (DET-INJ-001 / process_injection) is proven at the
+internal detection-engine level, not through a real `POST /api/v1/ingest`
+call — the manual walkthrough here injects the same crafted event Manager
+would receive if a real endpoint could produce it, which today none can
+(see the addendum for why).
 
 ## What this demo honestly is (read this before promising anything to a panel)
 
@@ -375,15 +391,21 @@ payload.
   `custom_action` that reaches either mapping, so this scenario cannot be
   triggered by posting a real event to `/api/v1/ingest` today. Do not
   demonstrate this path as if a real detection produced it.
-- **`QUARANTINE_FILE`** is now a real, detection-triggered, TRUE-PRODUCTION-E2E
-  path: production rule `DET-PERS-007` (a `file_write` event under a Windows
-  Startup folder or a Linux `/etc/init.d`/`rc.local` path) sets
-  `active_response: QUARANTINE_FILE`, and
-  `tests/test_e2e_response_pipeline.py::test_quarantine_file_real_detector_recommendation_succeeds_on_a_true_production_path`
-  proves the full real chain through to a `SUCCEEDED` result and audit trail,
-  exactly like `KILL_PROCESS`. It can be demonstrated the same way as the
-  `KILL_PROCESS` scenario above, substituting a startup-folder file-write
-  event for the process-injection one.
+- **`QUARANTINE_FILE`** is now a real, detection-triggered,
+  **TRUE-PRODUCTION-E2E from the actual wire boundary** (Phase 15): production
+  rule `DET-PERS-007` (a `file_create` event under a Windows Startup folder
+  or a Linux `/etc/init.d`/`rc.local` path — corrected from the
+  wire-unreachable `file_write` this file previously described) sets
+  `active_response: QUARANTINE_FILE`. Two independent proofs exist:
+  `panopticon-manager/tests/test_real_ingest_detection_reachability.py::test_det_pers_007_is_reachable_through_real_post_ingest`
+  drives it through a real `POST /api/v1/ingest` call (no bypass), and
+  `tests/test_e2e_response_pipeline.py::test_quarantine_file_real_detector_recommendation_succeeds_via_internal_detection_bypass`
+  proves the full chain from an internally-injected event through to a
+  `SUCCEEDED` result and audit trail. It can be demonstrated live the same
+  way as the `KILL_PROCESS` scenario above, substituting a startup-folder
+  `file_create` event for the process-injection one — and unlike
+  `KILL_PROCESS`, that substitute event is now genuinely something a real
+  Windows agent's Sysmon collector can and does produce.
 - **`COLLECT_FILE`, `RELEASE_HOST_ISOLATION`** have no
   `response_engine.translate_recommendation` mapping at all (verified by
   reading `vendor/response_engine/response_engine/recommendation.py`) — they
@@ -404,10 +426,24 @@ payload.
 
 | Action | Status |
 |---|---|
-| `KILL_PROCESS` | TRUE-PRODUCTION-E2E |
+| `KILL_PROCESS` | See note below — not TRUE-PRODUCTION-E2E via `DET-INJ-001` |
 | `ISOLATE_HOST` | TRUE-PRODUCTION-E2E |
 | `QUARANTINE_FILE` | TRUE-PRODUCTION-E2E |
 | `COLLECT_PROCESS_INFO` | BOUNDARY-LEVEL / OPT-IN (implemented, contract-supported; no shipped rule opts in) |
 | `COLLECT_NETWORK_CONNECTIONS` | BOUNDARY-LEVEL / OPT-IN (implemented, contract-supported; no shipped rule opts in) |
 | `COLLECT_FILE` | CONTRACT-SUPPORTED, IMPLEMENTED on both endpoint agents, DETECTION-UNWIRED |
 | `RELEASE_HOST_ISOLATION` | ANALYST-INITIATED (intentionally never detection-triggered) |
+
+**`KILL_PROCESS` note (Phase 15):** this file and `docs/RESPONSE_ENGINE_STATE.md`
+previously called `KILL_PROCESS` TRUE-PRODUCTION-E2E on the strength of
+`DET-INJ-001`, which is now confirmed wire-unreachable (see Correction 2
+above) — that specific citation was wrong. Other real, shipped rules that
+also map to `active_response: TERMINATE_PROCESS` (e.g. `DET-CRED-001`,
+`DET-MALW-002`, `DET-LAT-003`) declare `event_type: process_create`, a
+value real telemetry genuinely produces, so `KILL_PROCESS` is plausibly
+reachable via one of those — but this was not verified with a real-ingest
+test in this phase (auditing all `TERMINATE_PROCESS`-mapped rules was out
+of scope for a fix targeted at `DET-INJ-001`/`DET-PERS-007`). Do not cite
+`KILL_PROCESS` as TRUE-PRODUCTION-E2E without a real-ingest test backing a
+specific rule, the same way `test_real_ingest_detection_reachability.py`
+now does for `DET-PERS-007`.
