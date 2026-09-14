@@ -258,6 +258,112 @@ def test_kill_process_real_detector_recommendation_succeeds_with_a_true_producti
     assert audit_events == ["created", "dispatched", "accepted", "result_received"]
 
 
+def _startup_folder_file_write_event(*, file_path: str, host_id: str = _HOST_ID) -> dict:
+    """A real event matching production rule DET-PERS-007's actual YAML logic
+    (file.path containing a Windows/Linux autostart location) -- the same
+    file_write event_type eyedetect's real rule set already ships."""
+    return {
+        "schema_version": "0.4",
+        "event_id": "evt_" + "7" * 64,
+        "event_type": "file_write",
+        "host_id": host_id,
+        "timestamp": "2026-09-14T12:00:00.000Z",
+        "process": {"name": "explorer.exe", "pid": 6001},
+        "file": {"path": file_path},
+    }
+
+
+def test_quarantine_file_real_detector_recommendation_succeeds_on_a_true_production_path(
+    client: TestClient, tmp_path
+) -> None:
+    """TRUE PRODUCTION PATH: a real file_write event matching real production
+    rule DET-PERS-007 -> real RuleEvaluator match -> real
+    ActiveResponseEngine.resolve_action (QUARANTINE_FILE, with the
+    triggering event's real file.path) -> real Alert -> real AlertSink.emit
+    -> real response.on_alert_created -> real (unmocked)
+    translate_recommendation -> QUARANTINE_FILE command -> dispatch ->
+    ACCEPTED -> execution result -> SUCCEEDED -> full audit trail. This
+    closes the gap where DET-PERS-007 advertised active_response:
+    QUARANTINE_FILE but resolve_action had no matching branch, so the
+    recommendation silently disappeared before reaching translate_recommendation."""
+    agent_token = _enroll(client, "agent-quarantine-prod", "HOST-QUARANTINE-PROD")
+    target_path = r"C:\Users\victim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\evil.exe"
+    event = _startup_folder_file_write_event(file_path=target_path, host_id="HOST-QUARANTINE-PROD")
+    _run_real_detector_event(tmp_path, event, "agent-quarantine-prod")
+
+    conn = db_module.connect()
+    alert_row = conn.execute(
+        "SELECT alert_id FROM alerts WHERE agent_id = 'agent-quarantine-prod'"
+    ).fetchone()
+    assert alert_row is not None, "the real RuleEvaluator did not fire DET-PERS-007"
+    alert_id = str(alert_row["alert_id"])
+
+    response_row = conn.execute(
+        "SELECT response_id, lifecycle_state, action, tier FROM response_actions "
+        "WHERE alert_id = ?",
+        (alert_id,),
+    ).fetchone()
+    assert response_row is not None
+    assert response_row["action"] == "QUARANTINE_FILE"
+    assert response_row["tier"] == "ANALYST_APPROVAL"
+    assert response_row["lifecycle_state"] == "PENDING"
+    response_id = str(response_row["response_id"])
+
+    analyst_token = _enroll_analyst(client, "analyst-quarantine-prod")
+    authorized = client.post(
+        f"/api/v1/response-actions/{response_id}/authorize",
+        headers={"Authorization": f"Bearer {analyst_token}"},
+    )
+    assert authorized.status_code == 200
+    command_id = str(
+        conn.execute(
+            "SELECT command_id FROM response_actions WHERE response_id = ?", (response_id,)
+        ).fetchone()["command_id"]
+    )
+
+    command_row = conn.execute(
+        "SELECT command_json FROM commands WHERE command_id = ?", (command_id,)
+    ).fetchone()
+    queued_target = json.loads(str(command_row["command_json"]))["target"]
+    assert queued_target == {"path": target_path}
+
+    headers = {"Authorization": f"Bearer {agent_token}"}
+    polled = client.get("/api/v1/agents/agent-quarantine-prod/commands", headers=headers)
+    dispatched = polled.json()["commands"]
+    assert len(dispatched) == 1 and dispatched[0]["action"] == "QUARANTINE_FILE"
+
+    accepted = client.post(
+        f"/api/v1/agents/agent-quarantine-prod/commands/{command_id}/accept", headers=headers
+    )
+    assert accepted.status_code == 200
+
+    result = client.post(
+        "/api/v1/agents/agent-quarantine-prod/command-results",
+        json={
+            "result_id": "result-quarantine-prod",
+            "command_id": command_id,
+            "outcome": "succeeded",
+            "detail": "file quarantined",
+            "correlation_id": dispatched[0]["correlation_id"],
+        },
+        headers=headers,
+    )
+    assert result.status_code == 200
+
+    final = conn.execute(
+        "SELECT lifecycle_state FROM commands WHERE command_id = ?", (command_id,)
+    ).fetchone()
+    assert final["lifecycle_state"] == "SUCCEEDED"
+    audit_events = [
+        row["event"]
+        for row in conn.execute(
+            "SELECT event FROM command_audit WHERE command_id = ? ORDER BY occurred_at",
+            (command_id,),
+        ).fetchall()
+    ]
+    assert audit_events == ["created", "dispatched", "accepted", "result_received"]
+
+
 def test_kill_process_pid_reuse_is_rejected_on_a_true_production_path(
     client: TestClient, tmp_path
 ) -> None:
