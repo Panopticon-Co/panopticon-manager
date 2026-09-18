@@ -1,5 +1,5 @@
 """SQLite connection factory. One connection per thread, no ORM — matches the
-style already established in vendor/eyedetect/src/reliability/spool.py.
+style already established in vendor/eyedetect/panopticon_detection/reliability/spool.py.
 
 Pragmas are non-negotiable per ADR 003: WAL journaling, NORMAL sync, a 5s busy
 timeout so concurrent writers block briefly instead of raising "database is

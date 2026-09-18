@@ -1,5 +1,5 @@
 """Numbered schema migrations, modeled on the ordered-function pattern in
-vendor/eyedetect/src/reliability/spool.py (``_migration_1`` / ``_MIGRATIONS``).
+vendor/eyedetect/panopticon_detection/reliability/spool.py (``_migration_1`` / ``_MIGRATIONS``).
 
 Each entry in ``_MIGRATIONS`` upgrades version i to i+1. Never edit an
 already-applied migration function — append a new one instead. Tables beyond

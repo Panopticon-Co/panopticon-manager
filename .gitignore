@@ -39,5 +39,6 @@ Desktop.ini
 *.db-shm
 /health.json
 /metrics.prom
+.venv/
 demo-tls/
 demo-data/

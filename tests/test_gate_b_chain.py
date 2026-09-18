@@ -2,11 +2,13 @@
 
 Two hand-built normalized events (certutil process-create, then that same
 process's outbound connection) must produce three alert rows: DET-PROC-003,
-DET-NET-006, and the CORR-003 correlated incident joining them by PID.
+DET-NET-006, and the PROV-CAMPAIGN incident joining them through the
+provenance graph.
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -63,7 +65,7 @@ def _db(path: Path) -> sqlite3.Connection:
 
 def test_certutil_chain_produces_three_alerts(tmp_path: Path) -> None:
     conn = _db(tmp_path / "p.db")
-    run, sink, writer = build_detection_run(
+    run, sink, writer, _context = build_detection_run(
         conn, alerts_path=tmp_path / "alerts.ndjson", rules_dir=_DEFAULT_RULES_DIR
     )
     try:
@@ -75,8 +77,21 @@ def test_certutil_chain_produces_three_alerts(tmp_path: Path) -> None:
         writer.close()
 
     rule_ids = {r["rule_id"] for r in conn.execute("SELECT rule_id FROM alerts")}
-    assert {"DET-PROC-003", "DET-NET-006", "CORR-003"} <= rule_ids
+    assert {"DET-PROC-003", "DET-NET-006", "PROV-CAMPAIGN"} <= rule_ids
 
-    corr = conn.execute("SELECT * FROM alerts WHERE rule_id = 'CORR-003'").fetchone()
-    assert corr["mitre_technique"] == "T1105"
+    corr = conn.execute("SELECT * FROM alerts WHERE rule_id = 'PROV-CAMPAIGN'").fetchone()
     assert corr["host_id"] == "HOST-B"
+
+    # CORR-003 hardcoded mitre_technique T1105 on the correlation rule itself.
+    # A campaign is no longer a named rule with its own fixed mapping -- it is
+    # a traversal result, so it reports the technique of the detection that
+    # anchored the search (DET-NET-006, T1071). The full set of techniques the
+    # chain covers is in the evidence rather than flattened into one field.
+    assert corr["mitre_technique"] == "T1071"
+    evidence = json.loads(corr["alert_json"])["evidence"]
+    # DET-PROC-003's own mitre.tactic is "Ingress Tool Transfer" (T1105);
+    # DET-NET-006's is "Command and Control" (T1071, the anchor). Both stages
+    # contribute a distinct tactic to the chain.
+    assert evidence["tactics_covered"] == ["Ingress Tool Transfer", "Command and Control"]
+    assert "DET-PROC-003" in evidence["attack_chain"]
+    assert "DET-NET-006" in evidence["attack_chain"]

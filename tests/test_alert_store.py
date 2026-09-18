@@ -1,7 +1,8 @@
 """Alert persistence — manager/detection/store.py.
 
 The detection engine assigns each atomic alert a deterministic
-``ALT-<sha1[:8]>`` id (``vendor/eyedetect/src/alerting/alert.py::_stable_alert_id``),
+``ALT-<sha1[:8]>`` id (see ``panopticon_detection/alerting/alert.py``,
+``_stable_alert_id``),
 so re-processing the same event after a crash produces the same id. ``INSERT OR
 IGNORE`` on that id is what makes the worker's claim/lease loop safe to retry.
 """
@@ -12,10 +13,10 @@ import json
 import sqlite3
 from pathlib import Path
 
-import manager.vendor_path  # noqa: F401  (sys.path side effect before src.* import)
+import manager.vendor_path  # noqa: F401  (sys.path side effect before engine import)
 from manager import migrations
 from manager.detection.store import insert_alert
-from src.alerting.alert import Alert
+from panopticon_detection.alerting.alert import Alert
 
 
 def _db(path: Path) -> sqlite3.Connection:

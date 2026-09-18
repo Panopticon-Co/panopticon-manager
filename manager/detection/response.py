@@ -4,7 +4,7 @@ typed command. See docs/adr/004-response-engine.md for the full design.
 Detection Engine never executes a response -- it only recommends one. The
 recommendation itself is computed upstream, inside vendor/eyedetect, by
 ActiveResponseEngine.resolve_action (see
-vendor/eyedetect/src/alerting/active_response.py) while the full triggering
+vendor/eyedetect/panopticon_detection/alerting/active_response.py) while the full triggering
 event is still in scope, and is carried on the resulting Alert as
 ``alert.active_response`` -- this module never re-derives it and never
 receives the raw event itself (AlertSink.emit, manager/detection/factory.py,
