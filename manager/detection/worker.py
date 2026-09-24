@@ -30,6 +30,7 @@ _log = logging.getLogger("manager.detection.worker")
 CLAIM_LIMIT = 256
 LEASE_SECONDS = 60
 PRUNE_EVERY_IDLE_ROUNDS = 60
+PRUNE_EVERY_EVENTS = 10_000
 IDLE_SLEEP_SECONDS = 1.0
 
 
@@ -45,6 +46,8 @@ class DetectionWorker:
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="detection-worker", daemon=True)
         self._started = False
+        self._idle_rounds = 0
+        self._events_since_prune = 0
 
     # -- lifecycle -----------------------------------------------------
     def start(self) -> None:
@@ -64,22 +67,11 @@ class DetectionWorker:
         _log.info("detection worker started (rules=%s)", self._rules_dir)
         try:
             self.revert_stale_claims(conn)
-            idle_rounds = 0
             while not self._stop.is_set():
-                if self.run_once(conn, run, sink) == 0:
-                    # The provenance graph is in-memory and grows with every
-                    # event. There is no background scheduler here, so prune on
-                    # the idle path -- the same place the queue is quiet and the
-                    # same pattern expire_stale_response_actions uses.
-                    idle_rounds += 1
-                    if idle_rounds >= PRUNE_EVERY_IDLE_ROUNDS:
-                        idle_rounds = 0
-                        dropped = prune_graph(context)
-                        if dropped["edges_removed"] or dropped["processes_removed"]:
-                            _log.info("pruned provenance: %s", dropped)
+                claimed = self.run_once(conn, run, sink)
+                self.maybe_prune(context, claimed)
+                if claimed == 0:
                     self._stop.wait(IDLE_SLEEP_SECONDS)
-                else:
-                    idle_rounds = 0
         finally:
             writer.close()
             conn.close()
@@ -152,6 +144,33 @@ class DetectionWorker:
                 conn.commit()
             except Exception:
                 self._mark_failed(conn, event_id)
+
+    def maybe_prune(self, context, claimed: int) -> dict[str, int] | None:
+        """Prune detection state after a quiet spell or a volume of events,
+        whichever comes first. Returns what was dropped, or None if skipped.
+
+        Detection state is in-memory and grows with every event, and there is
+        no background scheduler. Pruning only on the idle path meant a worker
+        under sustained load -- exactly when state grows fastest -- never pruned.
+        """
+        if claimed:
+            self._idle_rounds = 0
+            self._events_since_prune += claimed
+        else:
+            self._idle_rounds += 1
+
+        if (
+            self._events_since_prune < PRUNE_EVERY_EVENTS
+            and self._idle_rounds < PRUNE_EVERY_IDLE_ROUNDS
+        ):
+            return None
+
+        self._idle_rounds = 0
+        self._events_since_prune = 0
+        dropped = prune_graph(context)
+        if any(dropped.values()):
+            _log.info("pruned detection state: %s", dropped)
+        return dropped
 
     def run_once(self, conn: sqlite3.Connection, run, sink) -> int:
         """One claim + process cycle. Returns the number of events claimed."""
