@@ -103,3 +103,80 @@ def test_unknown_source_kind_is_rejected_by_both() -> None:
     event = _base_process_event()
     event["source"]["kind"] = "linux_untrusted"
     _assert_both_reject(event)
+
+
+# -- Schema 0.5 families (additive over 0.4) ----------------------------
+
+
+def _v05(category: str, type_: str, block_key: str, block: dict) -> dict:
+    """A 0.5 event of ``category`` built from a valid process sample: reuse its
+    ids/host/user/process (the source context), swap the event category/type,
+    and attach the family block."""
+    event = _base_process_event()
+    event["schema_version"] = "0.5"
+    event["event"]["category"] = category
+    event["event"]["type"] = type_
+    if block_key:
+        event[block_key] = block
+    return event
+
+
+def _target(event: dict) -> dict:
+    return {
+        "entity_id": event["process"]["entity_id"],
+        "pid": 712,
+        "executable": "C:\\Windows\\System32\\lsass.exe",
+        "user": None,
+    }
+
+
+def _v05_events() -> list[dict]:
+    dns = _v05("dns", "query", "dns", {
+        "query_name": "update-cdn.example.test",
+        "query_status": 0,
+        "query_results": "::ffff:203.0.113.50;",
+    })
+    access = _v05("process_access", "access", "process_access", {
+        "target": _target(_base_process_event()),
+        "granted_access": "0x1fffff",
+        "call_trace": "C:\\Windows\\SYSTEM32\\dbgcore.DLL+9447",
+    })
+    thread = _v05("remote_thread", "create", "remote_thread", {
+        "target": _target(_base_process_event()),
+        "new_thread_id": 10204,
+        "start_address": "0x00007FFB9285E540",
+        "start_module": None,
+        "start_function": None,
+    })
+    script = _v05("script_block", "execute", "script_block", {
+        "script_block_id": "5d9e2f8a-0b1c-4e6f-9a2d-7c3b1e0f4a55",
+        "message_number": 1,
+        "message_total": 1,
+        "path": None,
+        "text": "$x = 1",
+        "text_length": 6,
+        "text_truncated": False,
+        "text_sha256": None,
+    })
+    stop = _v05("process", "stop", "", {})
+    return [dns, access, thread, script, stop]
+
+
+@pytest.mark.parametrize("event", _v05_events(), ids=lambda e: e["event"]["category"])
+def test_schema_05_families_accepted_by_both(event: dict) -> None:
+    jsonschema.validate(event, _SCHEMA)
+    TelemetryEvent.model_validate(event)
+
+
+def test_schema_05_family_missing_its_block_rejected_by_both() -> None:
+    event = _v05("dns", "query", "", {})  # category dns but no dns block
+    _assert_both_reject(event)
+
+
+def test_process_access_requires_hex_granted_access() -> None:
+    event = _v05("process_access", "access", "process_access", {
+        "target": _target(_base_process_event()),
+        "granted_access": "FULL_ACCESS",  # not a 0x hex string
+        "call_trace": None,
+    })
+    _assert_both_reject(event)
