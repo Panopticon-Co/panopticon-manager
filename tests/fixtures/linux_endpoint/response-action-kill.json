@@ -1,0 +1,118 @@
+{
+  "schema_version": "1.0",
+  "record_type": "event",
+  "id": "88f7500ccb7df377c95927aab35b7378",
+  "seq": 2860,
+  "type": "response.action",
+  "time": "2026-10-06T03:23:04.475184281Z",
+  "observed_time": "2026-10-06T13:57:56.273027775Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "none"
+  },
+  "provenance": {
+    "provider": "command_channel",
+    "mechanism": "MGR-CMD",
+    "confidence": "observed"
+  },
+  "process": {
+    "entity_id": "a76e176fb9e561d84eee5d76445aa0b7",
+    "exec_gen": 0,
+    "pid": 13943,
+    "vpid": 13943,
+    "ppid": 13940,
+    "start_time": "2026-10-06T13:57:32.448889182Z",
+    "start_ticks": 716529,
+    "name": "sleep",
+    "state": "S",
+    "kernel_thread": false,
+    "threads": 1,
+    "confidence": {
+      "identity": "observed",
+      "attributes": "reconstructed"
+    },
+    "executable": {
+      "path": "/usr/bin/sleep",
+      "kind": "file",
+      "dev": 64768,
+      "inode": 918571,
+      "size": 35328,
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "setuid": false,
+      "setgid": false
+    },
+    "args": [
+      "sleep",
+      "600"
+    ],
+    "args_truncated": false,
+    "cwd": "/home/vagrant/src/panopticon-linux-agent",
+    "creds": {
+      "uid": 1000,
+      "euid": 1000,
+      "suid": 1000,
+      "fsuid": 1000,
+      "gid": 1000,
+      "egid": 1000,
+      "sgid": 1000,
+      "fsgid": 1000,
+      "groups": [
+        1000
+      ],
+      "loginuid": 1000,
+      "sessionid": 129
+    },
+    "caps": {
+      "effective": "0000000000000000",
+      "permitted": "0000000000000000",
+      "inheritable": "0000000000000000",
+      "bounding": "000001ffffffffff",
+      "ambient": "0000000000000000"
+    },
+    "seccomp": 0,
+    "no_new_privs": false,
+    "ns": {
+      "mnt": 4026531841,
+      "pid": 4026531836,
+      "net": 4026531840,
+      "user": 4026531837,
+      "uts": 4026531838,
+      "ipc": 4026531839,
+      "cgroup": 4026531835
+    },
+    "cgroup": "/user.slice/user-1000.slice/session-129.scope",
+    "unit": "session-129.scope",
+    "pgid": 13940,
+    "sid": 13940,
+    "env": {
+      "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+      "SSH_CLIENT": "10.0.2.2 55581 22",
+      "SSH_CONNECTION": "10.0.2.2 55581 10.0.2.15 22"
+    }
+  },
+  "response": {
+    "command_id": "b-kill-1791295052",
+    "correlation_id": "corr-b-kill-1791295052",
+    "action": "KILL_PROCESS",
+    "outcome": "succeeded",
+    "reason": "ok",
+    "dry_run": false,
+    "executed": true,
+    "mode": "pidfd",
+    "target": {
+      "pid": 13943,
+      "start_time_ticks": 716529
+    },
+    "affected": 1,
+    "detail": "SIGTERM sent"
+  },
+  "unavailable": []
+}

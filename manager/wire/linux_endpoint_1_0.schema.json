@@ -122,6 +122,9 @@
     },
     "netfilter": {
       "$ref": "#/$defs/Netfilter"
+    },
+    "response": {
+      "$ref": "#/$defs/Response"
     }
   },
   "required": [
@@ -500,6 +503,23 @@
       "then": {
         "required": [
           "netfilter"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^response\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "response"
         ]
       }
     }
@@ -2111,6 +2131,96 @@
         "table",
         "family",
         "entries"
+      ]
+    },
+    "Response": {
+      "type": "object",
+      "properties": {
+        "command_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{0,120}$"
+        },
+        "correlation_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{0,120}$"
+        },
+        "action": {
+          "enum": [
+            "KILL_PROCESS",
+            "COLLECT_PROCESS_INFO",
+            "COLLECT_NETWORK_CONNECTIONS",
+            "COLLECT_FILE",
+            "QUARANTINE_FILE",
+            "ISOLATE_HOST",
+            "RELEASE_HOST_ISOLATION",
+            "UNKNOWN"
+          ]
+        },
+        "outcome": {
+          "enum": [
+            "succeeded",
+            "failed",
+            "rejected",
+            "indeterminate"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "pattern": "^[a-z_]{1,48}$"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "executed": {
+          "type": "boolean"
+        },
+        "mode": {
+          "enum": [
+            "pidfd",
+            "pid_fallback"
+          ]
+        },
+        "target": {
+          "type": "object",
+          "properties": {
+            "pid": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "start_time_ticks": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "pid",
+            "start_time_ticks"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "affected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command_id",
+        "correlation_id",
+        "action",
+        "outcome",
+        "reason",
+        "dry_run",
+        "executed"
       ]
     }
   }

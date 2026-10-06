@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "record_type": "event",
+  "id": "539c071e7834895efb966b4ba4c13d95",
+  "seq": 2765,
+  "type": "response.action",
+  "time": "2026-10-06T03:23:04.475184281Z",
+  "observed_time": "2026-10-06T13:57:40.892421564Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "none"
+  },
+  "provenance": {
+    "provider": "command_channel",
+    "mechanism": "MGR-CMD",
+    "confidence": "observed"
+  },
+  "process": {
+    "pid": 13943
+  },
+  "response": {
+    "command_id": "a-mismatch-1791295052",
+    "correlation_id": "corr-a-mismatch-1791295052",
+    "action": "KILL_PROCESS",
+    "outcome": "rejected",
+    "reason": "target_mismatch",
+    "dry_run": true,
+    "executed": true,
+    "target": {
+      "pid": 13943,
+      "start_time_ticks": 716530
+    },
+    "detail": "the PID no longer belongs to the process that was named"
+  },
+  "unavailable": [
+    {
+      "field": "process",
+      "reason": "process_exited"
+    }
+  ]
+}

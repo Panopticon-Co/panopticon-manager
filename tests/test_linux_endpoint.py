@@ -63,7 +63,7 @@ def test_every_real_record_type_is_accepted(client: TestClient, enrolled: str) -
     response = client.post(URL, content=body(records), headers=headers(enrolled))
     assert response.status_code == 200, response.text
     data = response.json()
-    assert data["accepted"] == len(names) == 28
+    assert data["accepted"] == len(names) == 30
     assert data["rejected"] == []
     assert data["streams"][0]["acked_through_seq"] == len(names)
     assert data["streams"][0]["missing_ranges"] == []
@@ -199,3 +199,18 @@ def test_an_older_health_record_does_not_replace_a_newer_one(
         f"/api/v2/linux-endpoint/hosts/{newer['host']['id']}/health", headers=headers(enrolled)
     )
     assert response.json()["record_id"] == newer["id"]
+
+
+def test_a_response_record_needs_its_body_and_a_closed_action(client: TestClient, enrolled: str) -> None:
+    missing = numbered("response-action-kill", 1)
+    del missing["response"]
+    unknown = numbered("response-action-kill", 2)
+    unknown["response"]["action"] = "RUN_SHELL"
+    extra = numbered("response-action-kill", 3)
+    extra["response"]["command_line"] = "rm -rf /"
+    good = numbered("response-action-kill", 4)
+    response = client.post(URL, content=body([missing, unknown, extra, good]), headers=headers(enrolled))
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["accepted"] == 1
+    assert [r["reason"] for r in data["rejected"]] == ["schema_invalid"] * 3
