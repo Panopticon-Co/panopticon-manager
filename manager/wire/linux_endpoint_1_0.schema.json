@@ -791,6 +791,33 @@
         "unit": {
           "type": "string"
         },
+        "container": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{12,64}$"
+            },
+            "runtime": {
+              "enum": [
+                "docker",
+                "containerd",
+                "crio",
+                "podman",
+                "kubernetes"
+              ]
+            },
+            "pod_uid": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "runtime"
+          ]
+        },
         "tty": {
           "type": "string"
         },
