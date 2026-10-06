@@ -20,8 +20,10 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from manager import linux_endpoint_store
 import manager.vendor_path  # noqa: F401  (sys.path side effect, must precede engine imports)
 from manager.detection.factory import build_detection_run, prune_graph
+from manager.detection.linux_mapper import DETECTABLE_TYPES, to_engine_event
 from manager.timeutil import iso_at, iso_now
 from panopticon_detection.ingestion.officer_adapter import OfficerIngestionAdapter
 
@@ -45,6 +47,7 @@ class DetectionWorker:
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="detection-worker", daemon=True)
         self._started = False
+        self._linux_schema_ready = False
 
     # -- lifecycle -----------------------------------------------------
     def start(self) -> None:
@@ -158,7 +161,64 @@ class DetectionWorker:
         rows = self.claim_batch(conn)
         if rows:
             self.process_claimed(conn, run, sink, rows)
-        return len(rows)
+        linux = self.claim_linux_batch(conn)
+        if linux:
+            self.process_linux(conn, run, sink, linux)
+        return len(rows) + len(linux)
+
+    # -- Linux endpoint records (their own table; see linux_endpoint_store) --
+    def claim_linux_batch(self, conn: sqlite3.Connection) -> list[sqlite3.Row]:
+        """Claim stored Linux records of a detectable type that have no detection row yet."""
+        marks = ",".join("?" for _ in DETECTABLE_TYPES)
+        if not self._linux_schema_ready:
+            linux_endpoint_store.ensure_schema(conn)  # idempotent; the route may not have run yet
+            self._linux_schema_ready = True
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            rows = conn.execute(
+                "SELECT r.agent_id, r.record_id, r.raw_json FROM linux_endpoint_records r "
+                "LEFT JOIN linux_endpoint_detection d "
+                "ON d.agent_id=r.agent_id AND d.record_id=r.record_id "
+                f"WHERE d.record_id IS NULL AND r.type IN ({marks}) "
+                "ORDER BY r.event_time, r.record_id LIMIT ?",
+                (*DETECTABLE_TYPES, CLAIM_LIMIT),
+            ).fetchall()
+            claimed_at = iso_now()
+            conn.executemany(
+                "INSERT INTO linux_endpoint_detection (agent_id, record_id, state, claimed_at) "
+                "VALUES (?,?,'claimed',?)",
+                [(r["agent_id"], r["record_id"], claimed_at) for r in rows],
+            )
+            conn.commit()
+            return rows
+        except Exception:
+            conn.rollback()
+            raise
+
+    def process_linux(self, conn, run, sink, rows: list[sqlite3.Row]) -> None:
+        for row in rows:
+            key = (row["agent_id"], row["record_id"])
+            try:
+                event = to_engine_event(json.loads(row["raw_json"]))
+                sink.agent_id = row["agent_id"]
+                conn.execute("BEGIN IMMEDIATE")
+                if event is not None:
+                    run.process_event(event)
+                conn.execute(
+                    "UPDATE linux_endpoint_detection SET state='done' "
+                    "WHERE agent_id=? AND record_id=?", key)
+                conn.commit()
+            except Exception:
+                try:
+                    conn.rollback()
+                except sqlite3.Error:
+                    pass
+                _log.exception("linux detection failed for record %s", row["record_id"])
+                conn.execute("BEGIN IMMEDIATE")
+                conn.execute(
+                    "UPDATE linux_endpoint_detection SET state='failed', attempts=attempts+1 "
+                    "WHERE agent_id=? AND record_id=?", key)
+                conn.commit()
 
     # -- helpers ---------------------------------------------------
     @staticmethod

@@ -48,6 +48,14 @@ CREATE TABLE IF NOT EXISTS linux_endpoint_streams (
     updated_at      TEXT NOT NULL,
     PRIMARY KEY (agent_id, sensor_id, boot_id)
 );
+CREATE TABLE IF NOT EXISTS linux_endpoint_detection (
+    agent_id   TEXT NOT NULL,
+    record_id  TEXT NOT NULL,
+    state      TEXT NOT NULL,
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    claimed_at TEXT,
+    PRIMARY KEY (agent_id, record_id)
+);
 CREATE TABLE IF NOT EXISTS linux_endpoint_health (
     host_id     TEXT PRIMARY KEY,
     agent_id    TEXT NOT NULL,
