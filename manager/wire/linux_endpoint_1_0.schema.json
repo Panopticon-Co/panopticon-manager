@@ -113,6 +113,9 @@
     },
     "ns_change": {
       "$ref": "#/$defs/NsChange"
+    },
+    "dns": {
+      "$ref": "#/$defs/Dns"
     }
   },
   "required": [
@@ -405,6 +408,24 @@
         "required": [
           "process",
           "ns_change"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^dns\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "process",
+          "dns"
         ]
       }
     }
@@ -1827,6 +1848,91 @@
         "scope",
         "thread_id",
         "changes"
+      ]
+    },
+    "Dns": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1020
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transaction_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "recursion_desired": {
+          "type": "boolean"
+        },
+        "transport": {
+          "enum": [
+            "udp"
+          ]
+        },
+        "family": {
+          "enum": [
+            "ipv4",
+            "ipv6"
+          ]
+        },
+        "server": {
+          "type": "object",
+          "properties": {
+            "ip": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ip",
+            "port"
+          ]
+        },
+        "local": {
+          "type": "object",
+          "properties": {
+            "ip": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ip",
+            "port"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type",
+        "class",
+        "transaction_id",
+        "recursion_desired",
+        "transport",
+        "family",
+        "server",
+        "local"
       ]
     }
   }
