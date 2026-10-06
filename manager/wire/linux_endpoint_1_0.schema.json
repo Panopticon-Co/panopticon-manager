@@ -116,6 +116,12 @@
     },
     "dns": {
       "$ref": "#/$defs/Dns"
+    },
+    "lsm": {
+      "$ref": "#/$defs/Lsm"
+    },
+    "netfilter": {
+      "$ref": "#/$defs/Netfilter"
     }
   },
   "required": [
@@ -426,6 +432,74 @@
         "required": [
           "process",
           "dns"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^lsm\\.denial$"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "process",
+          "lsm"
+        ],
+        "properties": {
+          "lsm": {
+            "required": [
+              "outcome"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^lsm\\.policy$"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "lsm"
+        ],
+        "properties": {
+          "lsm": {
+            "not": {
+              "required": [
+                "outcome"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^netfilter\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "netfilter"
         ]
       }
     }
@@ -1933,6 +2007,110 @@
         "family",
         "server",
         "local"
+      ]
+    },
+    "Lsm": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "enum": [
+            "apparmor",
+            "selinux"
+          ]
+        },
+        "operation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "outcome": {
+          "enum": [
+            "denied",
+            "would_deny"
+          ]
+        },
+        "object": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "requested": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "denied": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "profile": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "target_context": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "object_class": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "comm": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "sanitized": {
+          "const": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "module",
+        "operation"
+      ]
+    },
+    "Netfilter": {
+      "type": "object",
+      "properties": {
+        "subsystem": {
+          "enum": [
+            "nft",
+            "xtables",
+            "other"
+          ]
+        },
+        "operation": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]{1,48}$"
+        },
+        "table": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "family": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "entries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "comm": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "subsystem",
+        "operation",
+        "table",
+        "family",
+        "entries"
       ]
     }
   }
