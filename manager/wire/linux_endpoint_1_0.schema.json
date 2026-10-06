@@ -104,6 +104,12 @@
     },
     "change": {
       "$ref": "#/$defs/Change"
+    },
+    "memory": {
+      "$ref": "#/$defs/Memory"
+    },
+    "bpf": {
+      "$ref": "#/$defs/Bpf"
     }
   },
   "required": [
@@ -264,7 +270,7 @@
       "if": {
         "properties": {
           "type": {
-            "pattern": "^kernel\\."
+            "pattern": "^kernel\\.module_"
           }
         },
         "required": [
@@ -274,6 +280,42 @@
       "then": {
         "required": [
           "module"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^kernel\\.bpf_"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "process",
+          "bpf"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^memory\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "process",
+          "memory"
         ]
       }
     },
@@ -1648,6 +1690,68 @@
         "parts",
         "truncated",
         "entries"
+      ]
+    },
+    "Memory": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "enum": [
+            "mmap",
+            "mprotect"
+          ]
+        },
+        "backing": {
+          "enum": [
+            "anonymous",
+            "memfd",
+            "file"
+          ]
+        },
+        "write_exec": {
+          "type": "boolean"
+        },
+        "address": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "backing",
+        "write_exec"
+      ]
+    },
+    "Bpf": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "prog_load",
+            "prog_attach",
+            "raw_tracepoint_open",
+            "link_create"
+          ]
+        },
+        "program_type": {
+          "type": "string"
+        },
+        "attach_type": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
       ]
     }
   }
