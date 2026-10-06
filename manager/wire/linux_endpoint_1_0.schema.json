@@ -1260,6 +1260,15 @@
               "drops": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "family": {
+                "type": "string"
+              },
+              "tier": {
+                "enum": [
+                  "primary",
+                  "fallback"
+                ]
               }
             },
             "additionalProperties": false,
@@ -1332,6 +1341,137 @@
             "btf",
             "bpf_lsm",
             "ringbuf"
+          ]
+        },
+        "wal": {
+          "type": "object",
+          "properties": {
+            "next_seq": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "durable_seq": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "acknowledged_seq": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "dropped_records": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "next_seq",
+            "durable_seq",
+            "acknowledged_seq",
+            "dropped_records"
+          ]
+        },
+        "totals": {
+          "type": "object",
+          "properties": {
+            "records": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "events": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "loss_records": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sink_errors": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "uptime_ms": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "records",
+            "events",
+            "loss_records",
+            "sink_errors",
+            "uptime_ms"
+          ]
+        },
+        "delivery": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "idle",
+                "delivering",
+                "backing_off",
+                "unauthorized",
+                "rejected"
+              ]
+            },
+            "acknowledged_seq": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "batches_sent": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "records_acknowledged": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "retries": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "refusals": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "consecutive_failures": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "records_quarantined": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "quarantine_failures": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "recent_quarantined_seqs": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "maxItems": 16
+            },
+            "last_error": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "acknowledged_seq",
+            "batches_sent",
+            "records_acknowledged",
+            "retries",
+            "refusals",
+            "consecutive_failures",
+            "records_quarantined",
+            "quarantine_failures",
+            "recent_quarantined_seqs"
           ]
         }
       },
