@@ -280,3 +280,42 @@ def test_crash_recovery_reprocesses_claimed_rows_once(tmp_path: Path) -> None:
     assert c.execute("SELECT detect_state FROM events").fetchone()["detect_state"] == "done"
     assert c.execute("SELECT COUNT(*) AS c FROM alerts").fetchone()["c"] == 1
     c.close()
+
+
+class _CountingContext:
+    """Stands in for DetectionContext: records prune calls, drops nothing."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def prune(self, before):
+        self.calls += 1
+        return {"edges_removed": 0, "processes_removed": 0}
+
+
+def test_prune_runs_under_sustained_load_without_an_idle_round(tmp_path: Path) -> None:
+    from manager.detection.worker import CLAIM_LIMIT, PRUNE_EVERY_EVENTS
+
+    w = _worker(tmp_path, tmp_path / "unused.db")
+    ctx = _CountingContext()
+    batches = -(-PRUNE_EVERY_EVENTS // CLAIM_LIMIT)  # ceil: full batches, never idle
+
+    results = [w.maybe_prune(ctx, CLAIM_LIMIT) for _ in range(batches)]
+
+    assert ctx.calls == 1
+    assert results[-1] is not None and all(r is None for r in results[:-1])
+
+
+def test_prune_still_runs_after_a_quiet_spell(tmp_path: Path) -> None:
+    from manager.detection.worker import PRUNE_EVERY_IDLE_ROUNDS
+
+    w = _worker(tmp_path, tmp_path / "unused.db")
+    ctx = _CountingContext()
+    for _ in range(PRUNE_EVERY_IDLE_ROUNDS):
+        w.maybe_prune(ctx, 0)
+    assert ctx.calls == 1
+
+    w.maybe_prune(ctx, 5)  # activity resets the idle count
+    for _ in range(PRUNE_EVERY_IDLE_ROUNDS - 1):
+        w.maybe_prune(ctx, 0)
+    assert ctx.calls == 1

