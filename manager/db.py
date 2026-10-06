@@ -1,7 +1,7 @@
 """SQLite connection factory. One connection per thread, no ORM — matches the
 style already established in vendor/eyedetect/panopticon_detection/reliability/spool.py.
 
-Pragmas are non-negotiable per ADR 003: WAL journaling, NORMAL sync, a 5s busy
+Pragmas use WAL journaling, FULL sync for durable endpoint acknowledgments, a 5s busy
 timeout so concurrent writers block briefly instead of raising "database is
 locked", and foreign keys enforced.
 """
@@ -32,7 +32,7 @@ def connect() -> sqlite3.Connection:
         raise RuntimeError("manager.db.configure() must be called before connect()")
     conn = sqlite3.connect(_db_path, check_same_thread=True)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA synchronous=FULL")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.row_factory = sqlite3.Row

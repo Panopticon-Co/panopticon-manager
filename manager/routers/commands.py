@@ -9,11 +9,13 @@ Command``) keep working unchanged."""
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import os
 import sqlite3
 from datetime import datetime, timezone
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Header, HTTPException
@@ -72,9 +74,11 @@ def authorize_and_enqueue(
     if enrolled is None:
         raise HTTPException(status_code=422, detail="target agent is not enrolled")
     payload = command.model_dump(mode="json")
+    if command.schema_version == "2":
+        payload["expires_at"] = command.expires_at.astimezone(timezone.utc).isoformat()
     payload.update(
         {
-            "schema_version": "1",
+            "schema_version": command.schema_version,
             "host_id": str(enrolled["host_id"]),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -143,21 +147,31 @@ def _expire_stale_commands(conn: sqlite3.Connection, now: str) -> None:
 
 
 @router.get("/api/v1/agents/{agent_id}/commands")
-async def poll(agent_id: str, authorization: str | None = Header(default=None)) -> dict:
+async def poll(
+    agent_id: str,
+    authorization: str | None = Header(default=None),
+    delivery_mode: Literal["single", "durable"] = "single",
+) -> dict:
     require_agent_token(agent_id, authorization)
     conn = db.connect()
     now = datetime.now(timezone.utc).isoformat()
     conn.execute("BEGIN IMMEDIATE")
     try:
         _expire_stale_commands(conn, now)
+        eligibility = (
+            "lifecycle_state IN ('AUTHORIZED','DISPATCHED')"
+            if delivery_mode == "durable"
+            else "delivered_at IS NULL"
+        )
         rows = conn.execute(
             "SELECT command_id, command_json FROM commands WHERE agent_id = ? "
-            "AND delivered_at IS NULL AND expires_at > ? ORDER BY created_at LIMIT 32",
+            f"AND {eligibility} AND expires_at > ? ORDER BY created_at LIMIT 32",
             (agent_id, now),
         ).fetchall()
         for row in rows:
             conn.execute(
-                "UPDATE commands SET delivered_at = ?, lifecycle_state = 'DISPATCHED' "
+                "UPDATE commands SET delivered_at = COALESCE(delivered_at,?), "
+                "lifecycle_state = 'DISPATCHED' "
                 "WHERE command_id = ?",
                 (now, row["command_id"]),
             )
@@ -229,14 +243,40 @@ async def submit_result(
         if command is None or str(command["agent_id"]) != agent_id:
             raise HTTPException(status_code=422, detail="command does not belong to agent")
         expires_at = datetime.fromisoformat(str(command["expires_at"]))
-        if expires_at <= datetime.now(expires_at.tzinfo):
+        if result.schema_version == "1" and expires_at <= datetime.now(expires_at.tzinfo):
             raise HTTPException(status_code=422, detail="command expired")
         queued = json.loads(str(command["command_json"]))
-        if (
-            result.correlation_id is not None
-            and result.correlation_id != queued.get("correlation_id")
+        if result.execution is not None and queued.get("action") != "KILL_PROCESS":
+            raise HTTPException(
+                status_code=422, detail="execution evidence does not match command action"
+            )
+        if result.correlation_id is not None and result.correlation_id != queued.get(
+            "correlation_id"
         ):
             raise HTTPException(status_code=422, detail="result correlation does not match command")
+        if result.schema_version == "2":
+            retained = result.model_dump(mode="json")
+            # Preserve the canonical digest of pre-extension version-2 receipts.
+            # Adding a default null field would turn their exact retries into 409.
+            if result.execution is None:
+                retained.pop("execution", None)
+            raw = json.dumps(retained, sort_keys=True, separators=(",", ":"))
+            digest = hashlib.sha256(raw.encode()).hexdigest()
+            prior = conn.execute(
+                "SELECT agent_id,command_id,payload_digest FROM command_result_receipts "
+                "WHERE result_id=?",
+                (result.result_id,),
+            ).fetchone()
+            if prior and (
+                prior["agent_id"] != agent_id
+                or prior["command_id"] != result.command_id
+                or prior["payload_digest"] != digest
+            ):
+                raise HTTPException(status_code=409, detail="immutable result identity collision")
+            conn.execute(
+                "INSERT OR IGNORE INTO command_result_receipts VALUES (?,?,?,?,?,?)",
+                (result.result_id, agent_id, result.command_id, digest, raw, iso_now()),
+            )
         # A command accepts exactly one outcome. A result is legal from either
         # DISPATCHED (no explicit accept/ack call) or ACCEPTED (the agent
         # acknowledged receipt first via accept() above) -- both represent
@@ -257,7 +297,11 @@ async def submit_result(
                 result.outcome,
             )
             conn.commit()
-            return {"result_id": result.result_id, "accepted": True}
+            return {
+                "result_id": result.result_id,
+                "accepted": True,
+                "retained": result.schema_version == "2",
+            }
         inserted = conn.execute(
             "INSERT OR IGNORE INTO command_results "
             "(result_id, command_id, agent_id, outcome, detail, received_at) "
@@ -276,6 +320,7 @@ async def submit_result(
                 "succeeded": "SUCCEEDED",
                 "failed": "FAILED",
                 "rejected": "REJECTED",
+                "indeterminate": "INDETERMINATE",
             }[result.outcome]
             conn.execute(
                 "UPDATE commands SET lifecycle_state = ? WHERE command_id = ?",
@@ -289,4 +334,8 @@ async def submit_result(
     except Exception:
         conn.rollback()
         raise
-    return {"result_id": result.result_id, "accepted": True}
+    return {
+        "result_id": result.result_id,
+        "accepted": True,
+        "retained": result.schema_version == "2",
+    }

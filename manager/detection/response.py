@@ -109,7 +109,31 @@ def _on_alert_created(conn: sqlite3.Connection, alert: Any) -> None:
     eyedetect_action = active_response.get("action")
     if not eyedetect_action:
         return
-    mapped = translate_recommendation(eyedetect_action, active_response)
+    endpoint_context = record.get("endpoint_context")
+    mapped = (
+        translate_recommendation(eyedetect_action, active_response, endpoint_context)
+        if endpoint_context is not None
+        else translate_recommendation(eyedetect_action, active_response)
+    )
+    if endpoint_context is not None and eyedetect_action in {
+        "TERMINATE_PROCESS",
+        "COLLECT_PROCESS_INFO",
+    }:
+        endpoint = (
+            endpoint_context.get("endpoint", {}) if isinstance(endpoint_context, dict) else {}
+        )
+        binding = conn.execute(
+            "SELECT a.agent_id,e.host_id FROM alerts a JOIN enrolled_agents e "
+            "ON e.agent_id=a.agent_id WHERE a.alert_id=? AND e.revoked_at IS NULL",
+            (record["alert_id"],),
+        ).fetchone()
+        if (
+            binding is None
+            or not isinstance(endpoint, dict)
+            or endpoint.get("agent_id") != binding["agent_id"]
+            or endpoint.get("host_id") != binding["host_id"]
+        ):
+            mapped = None
     response_id = str(uuid4())
     now = iso_now()
     if mapped is None:
@@ -170,7 +194,7 @@ def authorize_response_action(conn: sqlite3.Connection, response_id: str, actor:
     if row is None:
         return
     alert = conn.execute(
-        "SELECT agent_id FROM alerts WHERE alert_id = ?", (row["alert_id"],)
+        "SELECT agent_id,alert_json FROM alerts WHERE alert_id = ?", (row["alert_id"],)
     ).fetchone()
     if alert is None or alert["agent_id"] is None:
         conn.execute(
@@ -180,12 +204,42 @@ def authorize_response_action(conn: sqlite3.Connection, response_id: str, actor:
         )
         return
     command_id = f"resp-{response_id}"
+    target = json.loads(row["target_json"])
+    if "boot_id" in target:
+        stored_alert = json.loads(alert["alert_json"])
+        context = stored_alert.get("endpoint_context")
+        recommendation = stored_alert.get("active_response") or {}
+        mapped = translate_recommendation(recommendation.get("action"), recommendation, context)
+        enrolled = conn.execute(
+            "SELECT host_id FROM enrolled_agents WHERE agent_id=? AND revoked_at IS NULL",
+            (alert["agent_id"],),
+        ).fetchone()
+        endpoint = context.get("endpoint", {}) if isinstance(context, dict) else {}
+        if (
+            mapped is None
+            or mapped[0] != row["action"]
+            or mapped[1] != target
+            or enrolled is None
+            or not isinstance(endpoint, dict)
+            or endpoint.get("agent_id") != alert["agent_id"]
+            or endpoint.get("host_id") != enrolled["host_id"]
+        ):
+            conn.execute(
+                "UPDATE response_actions SET lifecycle_state='REJECTED',decided_reason=? "
+                "WHERE response_id=?",
+                (
+                    "canonical target or enrolled host changed before authorization",
+                    response_id,
+                ),
+            )
+            return
     command = Command(
         command_id=command_id,
         agent_id=str(alert["agent_id"]),
+        schema_version="2" if "boot_id" in target else "1",
         action=row["action"],
         expires_at=datetime.now(timezone.utc) + _DEFAULT_COMMAND_TTL,
-        target=json.loads(row["target_json"]),
+        target=target,
     )
     authorize_and_enqueue(conn, command, actor, alert_id=row["alert_id"])
     conn.execute(

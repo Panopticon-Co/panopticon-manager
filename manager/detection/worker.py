@@ -1,7 +1,7 @@
-"""The detection worker: one dedicated thread, events-table-as-queue.
+"""One dedicated detection thread over durable legacy and canonical queues.
 
 Per ADR 003 this is the only code path in the process allowed to touch
-``DetectionRun``. Ingest writes ``events`` rows with ``detect_state='pending'``;
+``DetectionRun``. Ingest writes ``events`` or ``endpoint_records`` rows pending;
 this thread claims a bounded batch under ``BEGIN IMMEDIATE``, normalizes each
 event and runs it through the engine, and marks it ``done`` (or ``failed``, on a
 rule bug — which must poison exactly one event, never the claim loop).
@@ -23,6 +23,7 @@ from pathlib import Path
 import manager.vendor_path  # noqa: F401  (sys.path side effect, must precede engine imports)
 from manager.detection.factory import build_detection_run, prune_graph
 from manager.timeutil import iso_at, iso_now
+from panopticon_detection.ingestion.endpoint_adapter import EndpointIngestionAdapter
 from panopticon_detection.ingestion.officer_adapter import OfficerIngestionAdapter
 
 _log = logging.getLogger("manager.detection.worker")
@@ -90,7 +91,7 @@ class DetectionWorker:
         """A fresh connection with ADR-003 pragmas, for the calling thread."""
         conn = sqlite3.connect(self._db_path, check_same_thread=True)
         conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA synchronous=FULL")
         conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.row_factory = sqlite3.Row
@@ -108,6 +109,11 @@ class DetectionWorker:
                 "WHERE detect_state='claimed' AND (claimed_at IS NULL OR claimed_at < ?)",
                 (cutoff,),
             ).rowcount
+            n += conn.execute(
+                "UPDATE endpoint_records SET detect_state='pending', claimed_at=NULL "
+                "WHERE detect_state='claimed' AND (claimed_at IS NULL OR claimed_at < ?)",
+                (cutoff,),
+            ).rowcount
             conn.commit()
         except Exception:
             conn.rollback()
@@ -117,20 +123,42 @@ class DetectionWorker:
         return n
 
     def claim_batch(self, conn: sqlite3.Connection) -> list[sqlite3.Row]:
-        """Claim up to ``CLAIM_LIMIT`` pending events in one transaction."""
+        """Claim a bounded batch with capacity for each protocol, atomically."""
         conn.execute("BEGIN IMMEDIATE")
         try:
-            rows = conn.execute(
-                "SELECT event_id, agent_id, raw_json FROM events "
+            legacy = conn.execute(
+                "SELECT event_id, agent_id, raw_json, 'legacy' AS queue FROM events "
                 "WHERE detect_state='pending' "
                 "ORDER BY event_timestamp, event_id LIMIT ?",
                 (CLAIM_LIMIT,),
             ).fetchall()
+            canonical = conn.execute(
+                "SELECT record_id AS event_id, agent_id, raw_json, 'endpoint' AS queue "
+                "FROM endpoint_records WHERE detect_state='pending' "
+                "ORDER BY ingested_at,agent_id,record_id LIMIT ?",
+                (CLAIM_LIMIT,),
+            ).fetchall()
+            # Reserve half a batch for each producer protocol when both have
+            # backlog, then use spare capacity from either. A legacy backlog
+            # must not prevent new Windows records reaching fleet detection.
+            take_legacy = min(len(legacy), CLAIM_LIMIT // 2)
+            take_canonical = min(len(canonical), CLAIM_LIMIT - take_legacy)
+            take_legacy = min(len(legacy), CLAIM_LIMIT - take_canonical)
+            rows = legacy[:take_legacy] + canonical[:take_canonical]
             if rows:
                 claimed_at = iso_now()
                 conn.executemany(
                     "UPDATE events SET detect_state='claimed', claimed_at=? WHERE event_id=?",
-                    [(claimed_at, r["event_id"]) for r in rows],
+                    [(claimed_at, r["event_id"]) for r in rows if r["queue"] == "legacy"],
+                )
+                conn.executemany(
+                    "UPDATE endpoint_records SET detect_state='claimed', claimed_at=? "
+                    "WHERE agent_id=? AND record_id=?",
+                    [
+                        (claimed_at, r["agent_id"], r["event_id"])
+                        for r in rows
+                        if r["queue"] == "endpoint"
+                    ],
                 )
             conn.commit()
             return rows
@@ -148,10 +176,19 @@ class DetectionWorker:
                 sink.agent_id = row["agent_id"]
                 conn.execute("BEGIN IMMEDIATE")
                 run.process_event(event)  # emit -> insert_alert + alerts.ndjson
-                conn.execute("UPDATE events SET detect_state='done' WHERE event_id=?", (event_id,))
+                if row["queue"] == "endpoint":
+                    conn.execute(
+                        "UPDATE endpoint_records SET detect_state='done',claimed_at=NULL "
+                        "WHERE agent_id=? AND record_id=?",
+                        (row["agent_id"], event_id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE events SET detect_state='done' WHERE event_id=?", (event_id,)
+                    )
                 conn.commit()
             except Exception:
-                self._mark_failed(conn, event_id)
+                self._mark_failed(conn, event_id, agent_id=row["agent_id"], queue=row["queue"])
 
     def run_once(self, conn: sqlite3.Connection, run, sink) -> int:
         """One claim + process cycle. Returns the number of events claimed."""
@@ -164,6 +201,8 @@ class DetectionWorker:
     @staticmethod
     def _normalize(raw_json: str) -> dict:
         raw = json.loads(raw_json)
+        if EndpointIngestionAdapter.is_endpoint_record(raw):
+            return EndpointIngestionAdapter.transform(raw)
         if (
             isinstance(raw, dict)
             and isinstance(raw.get("event"), dict)
@@ -172,7 +211,9 @@ class DetectionWorker:
             return OfficerIngestionAdapter.transform_officer_event(raw)
         return raw
 
-    def _mark_failed(self, conn: sqlite3.Connection, event_id: str) -> None:
+    def _mark_failed(
+        self, conn: sqlite3.Connection, event_id: str, *, agent_id=None, queue="legacy"
+    ) -> None:
         try:
             conn.rollback()
         except sqlite3.Error:
@@ -180,11 +221,18 @@ class DetectionWorker:
         _log.exception("detection failed for event_id=%s", event_id)
         conn.execute("BEGIN IMMEDIATE")
         try:
-            conn.execute(
-                "UPDATE events SET detect_state='failed', "
-                "detect_attempts = detect_attempts + 1 WHERE event_id=?",
-                (event_id,),
-            )
+            if queue == "endpoint":
+                conn.execute(
+                    "UPDATE endpoint_records SET detect_state='failed',claimed_at=NULL, "
+                    "detect_attempts=detect_attempts+1 WHERE agent_id=? AND record_id=?",
+                    (agent_id, event_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE events SET detect_state='failed', "
+                    "detect_attempts = detect_attempts + 1 WHERE event_id=?",
+                    (event_id,),
+                )
             conn.commit()
         except Exception:
             conn.rollback()

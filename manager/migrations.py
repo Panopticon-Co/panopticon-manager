@@ -234,6 +234,116 @@ def _migration_11(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX ix_enrollment_nonces_expires ON enrollment_nonces (expires_at)")
 
 
+def _migration_12(conn: sqlite3.Connection) -> None:
+    """Preserve the full endpoint record surface independently of legacy detection schemas."""
+    conn.execute("""
+        CREATE TABLE endpoint_records (
+            agent_id TEXT NOT NULL, host_id TEXT NOT NULL, record_id TEXT NOT NULL,
+            kind TEXT NOT NULL, category TEXT NOT NULL, observed_at TEXT NOT NULL,
+            ingested_at TEXT NOT NULL, payload_digest TEXT NOT NULL, raw_json TEXT NOT NULL,
+            PRIMARY KEY(agent_id,record_id)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX ix_endpoint_records_host "
+        "ON endpoint_records(host_id,kind,category,observed_at)"
+    )
+    conn.execute("""
+        CREATE TABLE endpoint_latest (
+            agent_id TEXT NOT NULL, category TEXT NOT NULL, kind TEXT NOT NULL,
+            observed_at TEXT NOT NULL, record_id TEXT NOT NULL, raw_json TEXT NOT NULL,
+            PRIMARY KEY(agent_id,category,kind)
+        )
+    """)
+
+
+def _migration_13(conn: sqlite3.Connection) -> None:
+    """Canonical records are a durable detection queue, including existing rows."""
+    conn.execute(
+        "ALTER TABLE endpoint_records ADD COLUMN detect_state TEXT NOT NULL DEFAULT 'pending'"
+    )
+    conn.execute(
+        "ALTER TABLE endpoint_records ADD COLUMN detect_attempts INTEGER NOT NULL DEFAULT 0"
+    )
+    conn.execute("ALTER TABLE endpoint_records ADD COLUMN claimed_at TEXT")
+    conn.execute(
+        "CREATE INDEX ix_endpoint_records_detect ON endpoint_records(detect_state,ingested_at)"
+    )
+
+
+def _migration_14(conn: sqlite3.Connection) -> None:
+    """Clock-independent canonical state ordering; old projections stay unverified."""
+    conn.execute("""
+        CREATE TABLE endpoint_generations (
+            agent_id TEXT NOT NULL, installation_id TEXT NOT NULL,
+            generation TEXT NOT NULL, collector_epoch TEXT NOT NULL,
+            PRIMARY KEY(agent_id,installation_id,generation)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE endpoint_active_streams (
+            agent_id TEXT PRIMARY KEY, installation_id TEXT NOT NULL,
+            generation TEXT NOT NULL, collector_epoch TEXT NOT NULL
+        )
+    """)
+    for column in ("installation_id", "generation", "collector_epoch", "sequence"):
+        conn.execute(f"ALTER TABLE endpoint_latest ADD COLUMN {column} TEXT")
+
+
+def _migration_15(conn: sqlite3.Connection) -> None:
+    """One-use freshness challenges and immutable first-receipt capture age."""
+    conn.execute("""
+        CREATE TABLE endpoint_freshness_challenges (
+            agent_id TEXT PRIMARY KEY, nonce_digest TEXT NOT NULL,
+            server_epoch TEXT NOT NULL, issued_ns TEXT NOT NULL,
+            consumed INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE endpoint_capture_age (
+            agent_id TEXT NOT NULL, record_id TEXT NOT NULL, server_epoch TEXT NOT NULL,
+            received_ns TEXT NOT NULL, age_upper_bound_ms TEXT NOT NULL,
+            PRIMARY KEY(agent_id,record_id)
+        )
+    """)
+
+
+def _migration_16(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE command_result_receipts (
+            result_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, command_id TEXT NOT NULL,
+            payload_digest TEXT NOT NULL, raw_json TEXT NOT NULL, received_at TEXT NOT NULL
+        )
+    """)
+
+
+def _migration_17(conn: sqlite3.Connection) -> None:
+    """Discover retained unfinished captures without rewriting endpoint evidence."""
+    import json
+
+    from manager.process_snapshots import index_record
+
+    conn.execute("""
+        CREATE TABLE endpoint_process_capture_records (
+            agent_id TEXT NOT NULL, capture_id TEXT NOT NULL, record_id TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('begin','page','manifest')),
+            endpoint_scope TEXT NOT NULL, collector_epoch TEXT, collector_generation TEXT,
+            page_index TEXT, PRIMARY KEY(agent_id,record_id),
+            FOREIGN KEY(agent_id,record_id) REFERENCES endpoint_records(agent_id,record_id)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX ix_endpoint_process_captures "
+        "ON endpoint_process_capture_records(agent_id,capture_id,record_id)"
+    )
+    # Iterate one retained body at a time; never fetch all historical page payloads.
+    for row in conn.execute(
+        "SELECT raw_json FROM endpoint_records WHERE kind='state' AND category IN "
+        "('process_inventory_begin','process_inventory_page','process_inventory')"
+    ):
+        index_record(conn, json.loads(row["raw_json"]))
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -246,6 +356,12 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_9,
     _migration_10,
     _migration_11,
+    _migration_12,
+    _migration_13,
+    _migration_14,
+    _migration_15,
+    _migration_16,
+    _migration_17,
 ]
 
 

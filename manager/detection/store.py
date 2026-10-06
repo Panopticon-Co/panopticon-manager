@@ -3,7 +3,7 @@
 Handlers never write SQL directly (CLAUDE.md); this is the one place the
 ``alerts`` table is written. ``insert_alert`` is deliberately transaction-free —
 the detection worker owns the ``BEGIN IMMEDIATE`` boundary so the alert row and
-the ``events.detect_state='done'`` update commit together.
+the source queue's ``detect_state='done'`` update commit together.
 """
 
 from __future__ import annotations

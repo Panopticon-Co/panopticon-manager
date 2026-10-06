@@ -1,5 +1,65 @@
 # Response Engine — implementation state / handoff
 
+2026-10-06 structured execution evidence: result version 2 now optionally carries
+closed Windows process execution facts (representation, named stage, strict Boolean
+initiation/completion and uint32/null native error). Native serialization, shared
+Response contract and published JSON Schema reject contradictory facts/outcomes.
+Manager additionally binds the representation to queued KILL_PROCESS and preserves
+the complete object in immutable receipt JSON. Absent evidence remains absent in
+serialization/canonicalization, so pre-extension digests remain replayable. Explicit
+null and schema-1 evidence refuse. Current validation: native 18 (8.22 s), Manager
+213 (18.16 s), Response 122 (0.23 s), Ruff and Contracts fixtures pass. Native fixture
+output reaches real Manager retention; completion classifications are injected and
+do not prove OS action/transport. Earlier detail-only notes below are historical.
+Full target/provenance, mixed-version negotiation, Console, other-action evidence,
+leases/reconciliation and operational qualification remain open.
+
+2026-10-06 typed Windows process execution: native termination now returns typed
+refusal/failure/success/indeterminate state with stage, initiation/completion facts
+and optional Win32 error. The live receipt mapper no longer classifies diagnostic
+strings. Safety refusal becomes version-2 rejected; unobserved initiated completion
+cannot become definite failure/success even with inconsistent state. Existing result
+schema/Manager retention behavior is unchanged; facts currently reside in bounded
+detail text. All 18 native tests pass (8.45 s), including the owned-child action and
+injected completion-classification cases. Structured evidence, other-action typed
+APIs and actual OS-fault/response operational qualification remain open.
+
+2026-10-06 durable-inbox increment: Windows schema-3 journals now retain immutable
+commands, execution intent, outcomes and replay tombstones. The live worker commits
+intent before acceptance/action, recovers interrupted intent as indeterminate
+without repeating OS actions, and hands committed outcomes to the result outbox.
+An exclusive native scope handle refuses competing workers. Native polling opts
+into `delivery_mode=durable`; Manager redelivers dispatched commands until acceptance,
+terminal result or expiry while preserving legacy single-delivery defaults.
+All 18 native CTest entries and 199 scoped Manager tests pass; changed Python passes
+Ruff. These checks supersede the earlier absence of an inbox/redelivery path but do
+not qualify leases/fencing, actual HTTPS redelivery/result transport, OS-action
+crash reconciliation, disk/reboot/scope migration, Console or full endpoint DoD.
+
+2026-10-06 durable-result increment: Windows commits serialized version-2 outcomes
+to an encrypted dedicated result outbox and retries before each poll. Native
+acknowledgment requires matching ID plus accepted/retained Boolean proof. Manager
+migration 16 preserves full immutable correlated payloads, rejects same-ID changes,
+and retains late/indeterminate evidence without rewriting earlier lifecycle state.
+Version-1 behavior remains. Native 17/Manager 198/Response 101 checks pass. This
+does not close durable inbox, lease/redelivery, interrupted execution reconciliation,
+actual native HTTPS result-outbox qualification, Console or fleet/OS/fault gates.
+
+2026-10-06 Windows canonical increment: verified native endpoint subject context
+now maps process recommendations to schema-2 boot/PID/decimal uint64 targets.
+Response translation recomputes the native identity digest and requires exact
+recommendation agreement. Invalid/source-scoped/unresolved context cannot fall
+back to legacy process commands. Manager binds the originating alert to enrolled
+agent/host at staging and rechecks retained context/target and enrollment at analyst
+authorization; changed host binding rejects without dispatch. The real production
+DET-CRED-001 rule/AlertSink/Response path stages an analyst-approved schema-2 target
+which the compiled Windows decoder accepts. No native action runs in that fixture.
+Manager's scoped suite passes 196 tests and Response Engine passes 100 tests;
+changed files pass Ruff. Full live response, Console targeting, command leases,
+durable typed outcomes/recovery and compatibility remain open. Earlier dated
+limitations below describe the older implementation; this increment supersedes
+their blanket statement that canonical process recommendation targeting is absent.
+
 Last updated: 2026-09-13, after a seventh pass that built a true end-to-end
 vertical-slice test (real detector -> real Alert -> Response Engine ->
 authorization -> dispatch -> execution result -> audit) and, in the process,

@@ -79,6 +79,16 @@ def metrics_endpoint() -> Response:
             "# TYPE panopticon_events_failed gauge\n"
             f"panopticon_events_failed {failed}\n"
         )
+        for state in ("pending", "claimed", "failed"):
+            count = conn.execute(
+                "SELECT COUNT(*) AS c FROM endpoint_records WHERE detect_state=?", (state,)
+            ).fetchone()["c"]
+            body += (
+                f"\n# HELP panopticon_endpoint_records_{state} "
+                f"Canonical records in {state} detection state.\n"
+                f"# TYPE panopticon_endpoint_records_{state} gauge\n"
+                f"panopticon_endpoint_records_{state} {count}\n"
+            )
     except Exception:  # pragma: no cover - metrics must never 500
         pass
     return Response(content=body, media_type="text/plain; version=0.0.4")
