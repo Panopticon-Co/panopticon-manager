@@ -101,6 +101,9 @@
       "items": {
         "$ref": "#/$defs/Unavailable"
       }
+    },
+    "change": {
+      "$ref": "#/$defs/Change"
     }
   },
   "required": [
@@ -322,6 +325,23 @@
       "then": {
         "required": [
           "process"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^(posture|interface|account|package|device|firewall)\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "change"
         ]
       }
     }
@@ -1543,6 +1563,64 @@
         "part",
         "parts",
         "items"
+      ]
+    },
+    "Change": {
+      "type": "object",
+      "description": "Differences between two consecutive inventories of one host-state object. A baseline is never a change.",
+      "properties": {
+        "object": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "part": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "parts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "added",
+                  "removed",
+                  "modified"
+                ]
+              },
+              "before": {},
+              "after": {}
+            },
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "kind"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "object",
+        "total",
+        "part",
+        "parts",
+        "truncated",
+        "entries"
       ]
     }
   }
