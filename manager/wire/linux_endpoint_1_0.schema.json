@@ -1,0 +1,1409 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://panopticon.co/schema/linux-endpoint/1.0.schema.json",
+  "title": "Panopticon Linux endpoint record 1.0",
+  "description": "One NDJSON line produced by panopticon-sensord. Envelope and event bodies are closed (additionalProperties false); state items beyond processes are open objects whose fields are documented in the telemetry catalog.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "record_type": {
+      "enum": [
+        "event",
+        "state",
+        "health",
+        "loss"
+      ]
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)?$"
+    },
+    "time": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{9}Z$"
+    },
+    "observed_time": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{9}Z$"
+    },
+    "host": {
+      "$ref": "#/$defs/Host"
+    },
+    "sensor": {
+      "$ref": "#/$defs/Sensor"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "process": {
+      "$ref": "#/$defs/ProcessRef"
+    },
+    "parent": {
+      "$ref": "#/$defs/Process"
+    },
+    "target": {
+      "$ref": "#/$defs/Process"
+    },
+    "executable": {
+      "$ref": "#/$defs/Executable"
+    },
+    "previous_executable": {
+      "type": "string"
+    },
+    "previous_name": {
+      "type": "string"
+    },
+    "technique": {
+      "type": "string"
+    },
+    "creds_before": {
+      "$ref": "#/$defs/CredsBefore"
+    },
+    "file": {
+      "$ref": "#/$defs/File"
+    },
+    "network": {
+      "$ref": "#/$defs/Network"
+    },
+    "auth": {
+      "$ref": "#/$defs/Auth"
+    },
+    "module": {
+      "$ref": "#/$defs/Module"
+    },
+    "mount": {
+      "$ref": "#/$defs/Mount"
+    },
+    "fim": {
+      "$ref": "#/$defs/Fim"
+    },
+    "health": {
+      "$ref": "#/$defs/Health"
+    },
+    "loss": {
+      "$ref": "#/$defs/Loss"
+    },
+    "state": {
+      "$ref": "#/$defs/State"
+    },
+    "unavailable": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Unavailable"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "record_type",
+    "id",
+    "seq",
+    "type",
+    "time",
+    "observed_time",
+    "host",
+    "sensor",
+    "provenance",
+    "unavailable"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "event"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "health"
+              ]
+            },
+            {
+              "required": [
+                "loss"
+              ]
+            },
+            {
+              "required": [
+                "state"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "state"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "state"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "health"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "health"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "loss"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "loss"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "state"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "type": {
+            "pattern": "^state\\."
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^file\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "file"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^network\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "network"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^auth\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "auth"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^kernel\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "module"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^mount\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "mount"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^fim\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "fim"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^process\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "process"
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "Timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{9}Z$"
+    },
+    "Confidence": {
+      "enum": [
+        "observed",
+        "reconstructed",
+        "inferred",
+        "user_space_reported"
+      ]
+    },
+    "Host": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "boot_id": {
+          "type": "string"
+        },
+        "hostname": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "boot_id",
+        "hostname"
+      ]
+    },
+    "Sensor": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "policy_version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "policy_version"
+      ]
+    },
+    "Provenance": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "mechanism": {
+          "type": "string"
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "mechanism",
+        "confidence"
+      ]
+    },
+    "Unavailable": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "not_supported_by_provider",
+            "process_exited",
+            "permission_denied",
+            "truncated",
+            "budget_exceeded",
+            "not_applicable",
+            "kernel_feature_missing",
+            "object_gone"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "reason"
+      ]
+    },
+    "Hash": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sha1": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "md5": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ]
+    },
+    "Executable": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "file",
+            "deleted",
+            "memfd",
+            "anonymous",
+            "unknown"
+          ]
+        },
+        "dev": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inode": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mode": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "uid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "setuid": {
+          "type": "boolean"
+        },
+        "setgid": {
+          "type": "boolean"
+        },
+        "hash": {
+          "$ref": "#/$defs/Hash"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ]
+    },
+    "Creds": {
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "euid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "suid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fsuid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "egid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sgid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fsgid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "loginuid": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "sessionid": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "uid",
+        "euid",
+        "suid",
+        "fsuid",
+        "gid",
+        "egid",
+        "sgid",
+        "fsgid",
+        "groups",
+        "loginuid",
+        "sessionid"
+      ]
+    },
+    "Capabilities": {
+      "type": "object",
+      "properties": {
+        "effective": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "permitted": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "inheritable": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "bounding": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "ambient": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "effective",
+        "permitted",
+        "inheritable",
+        "bounding",
+        "ambient"
+      ]
+    },
+    "Ancestor": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string"
+        },
+        "executable": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entity_id",
+        "pid",
+        "name",
+        "executable"
+      ]
+    },
+    "Process": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "exec_gen": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "vpid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ppid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "start_time": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{9}Z$"
+        },
+        "start_ticks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1
+        },
+        "kernel_thread": {
+          "type": "boolean"
+        },
+        "threads": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "confidence": {
+          "type": "object",
+          "properties": {
+            "identity": {
+              "enum": [
+                "observed",
+                "reconstructed",
+                "inferred",
+                "user_space_reported"
+              ]
+            },
+            "attributes": {
+              "enum": [
+                "observed",
+                "reconstructed",
+                "inferred",
+                "user_space_reported"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "identity",
+            "attributes"
+          ]
+        },
+        "executable": {
+          "$ref": "#/$defs/Executable"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "args_truncated": {
+          "type": "boolean"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "creds": {
+          "$ref": "#/$defs/Creds"
+        },
+        "caps": {
+          "$ref": "#/$defs/Capabilities"
+        },
+        "seccomp": {
+          "type": "integer"
+        },
+        "no_new_privs": {
+          "type": "boolean"
+        },
+        "ns": {
+          "type": "object",
+          "properties": {
+            "mnt": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "pid": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "net": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "user": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "uts": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "ipc": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "cgroup": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "cgroup": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "tty": {
+          "type": "string"
+        },
+        "pgid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "exit_signal": {
+          "type": "integer"
+        },
+        "core_dumped": {
+          "type": "boolean"
+        },
+        "ancestry": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Ancestor"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "exec_gen",
+        "pid",
+        "ppid",
+        "name",
+        "state",
+        "kernel_thread",
+        "threads",
+        "confidence",
+        "executable",
+        "args",
+        "args_truncated",
+        "creds",
+        "caps",
+        "ns",
+        "pgid",
+        "sid"
+      ]
+    },
+    "ProcessStub": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "exec_gen": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pid"
+      ]
+    },
+    "ProcessRef": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Process"
+        },
+        {
+          "$ref": "#/$defs/ProcessStub"
+        }
+      ]
+    },
+    "CredsBefore": {
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "euid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "egid": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "uid",
+        "euid",
+        "gid",
+        "egid"
+      ]
+    },
+    "File": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "directory": {
+          "type": "boolean"
+        },
+        "old_path": {
+          "type": "string"
+        },
+        "stat": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "uid": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "gid": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "size": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "inode": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "device": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "mtime": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{9}Z$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "uid",
+            "gid",
+            "size",
+            "inode",
+            "device",
+            "mtime"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "directory"
+      ]
+    },
+    "Network": {
+      "type": "object",
+      "properties": {
+        "transport": {
+          "type": "string"
+        },
+        "family": {
+          "enum": [
+            "ipv4",
+            "ipv6"
+          ]
+        },
+        "direction": {
+          "enum": [
+            "outbound",
+            "inbound",
+            "listen"
+          ]
+        },
+        "local": {
+          "type": "object",
+          "properties": {
+            "ip": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ip",
+            "port"
+          ]
+        },
+        "remote": {
+          "type": "object",
+          "properties": {
+            "ip": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ip",
+            "port"
+          ]
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "state": {
+          "type": "string"
+        },
+        "socket_inode": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "uid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "holders": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "transport",
+        "family",
+        "direction",
+        "local",
+        "tags",
+        "state",
+        "socket_inode",
+        "uid"
+      ]
+    },
+    "Auth": {
+      "type": "object",
+      "properties": {
+        "service": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "success",
+            "failure"
+          ]
+        },
+        "user": {
+          "type": "string"
+        },
+        "target_user": {
+          "type": "string"
+        },
+        "invalid_user": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "ip": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ip",
+            "port"
+          ]
+        },
+        "key": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "fingerprint": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "fingerprint"
+          ]
+        },
+        "tty": {
+          "type": "string"
+        },
+        "working_directory": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "sanitized": {
+          "type": "boolean"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "service",
+        "outcome",
+        "user"
+      ]
+    },
+    "Module": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "size"
+      ]
+    },
+    "Mount": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "enum": [
+            "mounted",
+            "unmounted",
+            "remounted"
+          ]
+        },
+        "source": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "fstype": {
+          "type": "string"
+        },
+        "mount_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "device": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "super_options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "source",
+        "target",
+        "fstype",
+        "mount_id",
+        "device",
+        "options",
+        "super_options"
+      ]
+    },
+    "Fim": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "items": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "path": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "change": {
+          "type": "string"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "before": {
+          "type": "object"
+        },
+        "after": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Health": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "capabilities": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "events": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "drops": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "state",
+              "reason",
+              "capabilities",
+              "events",
+              "drops"
+            ]
+          }
+        },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "rss_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "cpu_milliseconds": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "wal_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "wal_records": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "rss_bytes",
+            "cpu_milliseconds",
+            "wal_bytes",
+            "wal_records"
+          ]
+        },
+        "kernel": {
+          "type": "object",
+          "properties": {
+            "release": {
+              "type": "string"
+            },
+            "btf": {
+              "type": "boolean"
+            },
+            "bpf_lsm": {
+              "type": "boolean"
+            },
+            "ringbuf": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "release",
+            "btf",
+            "bpf_lsm",
+            "ringbuf"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "providers",
+        "coverage",
+        "resources",
+        "kernel"
+      ]
+    },
+    "Loss": {
+      "type": "object",
+      "properties": {
+        "stage": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_type": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "count",
+        "by_type"
+      ]
+    },
+    "State": {
+      "type": "object",
+      "properties": {
+        "object": {
+          "type": "string"
+        },
+        "snapshot_id": {
+          "type": "string"
+        },
+        "part": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "parts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "object",
+        "snapshot_id",
+        "part",
+        "parts",
+        "items"
+      ]
+    }
+  }
+}

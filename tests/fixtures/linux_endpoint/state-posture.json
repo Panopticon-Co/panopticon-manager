@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "record_type": "state",
+  "id": "577a967b114f0ca4d3a06dc3cd621823",
+  "seq": 5,
+  "type": "state.posture",
+  "time": "2026-10-06T03:23:02.200364796Z",
+  "observed_time": "2026-10-06T03:23:02.200364796Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "none"
+  },
+  "provenance": {
+    "provider": "inventory",
+    "mechanism": "SYSFS+PROCFS",
+    "confidence": "observed"
+  },
+  "state": {
+    "object": "posture",
+    "snapshot_id": "sensor-0104a7120230-posture-3",
+    "part": 1,
+    "parts": 1,
+    "items": [
+      {
+        "lockdown": "none",
+        "secure_boot": "not_efi",
+        "lsm": [
+          "lockdown",
+          "capability"
+        ],
+        "selinux": "absent",
+        "apparmor": "enabled",
+        "sysctl": {
+          "kernel/kptr_restrict": 1,
+          "kernel/dmesg_restrict": 1,
+          "kernel/perf_event_paranoid": 4,
+          "kernel/unprivileged_bpf_disabled": 2,
+          "kernel/modules_disabled": 0,
+          "kernel/randomize_va_space": 2,
+          "kernel/yama/ptrace_scope": 1,
+          "kernel/sysrq": 176,
+          "kernel/core_pattern": "|/usr/share/apport/apport -p%p -s%s -c%c -d%d -P%P -u%u -g%g -- %E",
+          "fs/suid_dumpable": 2,
+          "fs/protected_symlinks": 1,
+          "fs/protected_hardlinks": 1,
+          "user/max_user_namespaces": 15191,
+          "kernel/unprivileged_userns_clone": 1,
+          "net/ipv4/ip_forward": 0
+        }
+      }
+    ]
+  },
+  "unavailable": []
+}

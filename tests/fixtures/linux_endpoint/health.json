@@ -1,0 +1,87 @@
+{
+  "schema_version": "1.0",
+  "record_type": "health",
+  "id": "ca1d5ccfa66c29a044e0497ea5bcff78",
+  "seq": 1,
+  "type": "health",
+  "time": "2026-10-06T03:23:02.200364796Z",
+  "observed_time": "2026-10-06T03:23:02.200364796Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "none"
+  },
+  "provenance": {
+    "provider": "sensor",
+    "mechanism": "self",
+    "confidence": "observed"
+  },
+  "health": {
+    "status": "healthy",
+    "providers": [
+      {
+        "name": "ebpf_process",
+        "state": "active",
+        "reason": "",
+        "capabilities": [
+          "process.fork",
+          "process.exec"
+        ],
+        "events": 6,
+        "drops": 0
+      },
+      {
+        "name": "netlink_proc",
+        "state": "standby",
+        "reason": "superseded by ebpf_process",
+        "capabilities": [
+          "process.fork",
+          "process.exec"
+        ],
+        "events": 0,
+        "drops": 0
+      }
+    ],
+    "coverage": {
+      "auth.failure": "audit_netlink",
+      "auth.login": "audit_netlink",
+      "auth.privilege": "audit_netlink",
+      "file.attrib": "fanotify_file",
+      "file.create": "fanotify_file",
+      "file.delete": "fanotify_file",
+      "file.modify": "fanotify_file",
+      "file.rename": "fanotify_file",
+      "kernel.module_load": "kernel_change",
+      "kernel.module_unload": "kernel_change",
+      "mount.changed": "kernel_change",
+      "network.accept": "sockdiag_network",
+      "network.connect": "sockdiag_network",
+      "network.listen": "sockdiag_network",
+      "process.cred_change": "ebpf_process",
+      "process.discovered": "procfs",
+      "process.exec": "ebpf_process",
+      "process.exit": "ebpf_process",
+      "process.fork": "ebpf_process",
+      "process.inject": "ebpf_process",
+      "process.rename": "ebpf_process"
+    },
+    "resources": {
+      "rss_bytes": 12836864,
+      "cpu_milliseconds": 821,
+      "wal_bytes": 0,
+      "wal_records": 0
+    },
+    "kernel": {
+      "release": "5.15.0-91-generic",
+      "btf": true,
+      "bpf_lsm": true,
+      "ringbuf": true
+    }
+  },
+  "unavailable": []
+}

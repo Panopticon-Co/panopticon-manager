@@ -1,0 +1,162 @@
+{
+  "schema_version": "1.0",
+  "record_type": "state",
+  "id": "0c1234cd465ee22035267b5dd4bf6304",
+  "seq": 2,
+  "type": "state.processes",
+  "time": "2026-10-06T03:23:02.200364796Z",
+  "observed_time": "2026-10-06T03:23:02.200364796Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "none"
+  },
+  "provenance": {
+    "provider": "procfs",
+    "mechanism": "PROCFS",
+    "confidence": "reconstructed"
+  },
+  "state": {
+    "object": "processes",
+    "snapshot_id": "sensor-0104a7120230-processes-1",
+    "part": 1,
+    "parts": 2,
+    "items": [
+      {
+        "entity_id": "26e9dbdf14ec06d0ad33e37b6e8c2199",
+        "exec_gen": 0,
+        "pid": 1,
+        "vpid": 1,
+        "ppid": 0,
+        "start_time": "2026-10-05T19:36:08.262331277Z",
+        "start_ticks": 139,
+        "name": "systemd",
+        "state": "S",
+        "kernel_thread": false,
+        "threads": 1,
+        "confidence": {
+          "identity": "observed",
+          "attributes": "reconstructed"
+        },
+        "executable": {
+          "path": "/usr/lib/systemd/systemd",
+          "kind": "file",
+          "dev": 64768,
+          "inode": 923552,
+          "size": 1849992,
+          "mode": 493,
+          "uid": 0,
+          "gid": 0,
+          "setuid": false,
+          "setgid": false
+        },
+        "args": [
+          "/sbin/init"
+        ],
+        "args_truncated": false,
+        "cwd": "/",
+        "creds": {
+          "uid": 0,
+          "euid": 0,
+          "suid": 0,
+          "fsuid": 0,
+          "gid": 0,
+          "egid": 0,
+          "sgid": 0,
+          "fsgid": 0,
+          "groups": [],
+          "loginuid": null,
+          "sessionid": null
+        },
+        "caps": {
+          "effective": "000001ffffffffff",
+          "permitted": "000001ffffffffff",
+          "inheritable": "0000000000000000",
+          "bounding": "000001ffffffffff",
+          "ambient": "0000000000000000"
+        },
+        "seccomp": 0,
+        "no_new_privs": false,
+        "ns": {
+          "mnt": 4026531841,
+          "pid": 4026531836,
+          "net": 4026531840,
+          "user": 4026531837,
+          "uts": 4026531838,
+          "ipc": 4026531839,
+          "cgroup": 4026531835
+        },
+        "cgroup": "/init.scope",
+        "unit": "init.scope",
+        "pgid": 1,
+        "sid": 1,
+        "env": {
+          "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        }
+      },
+      {
+        "entity_id": "98738c56af917d38792a8156512a30f4",
+        "exec_gen": 0,
+        "pid": 2,
+        "vpid": 2,
+        "ppid": 0,
+        "start_time": "2026-10-05T19:36:08.262331277Z",
+        "start_ticks": 139,
+        "name": "kthreadd",
+        "state": "S",
+        "kernel_thread": true,
+        "threads": 1,
+        "confidence": {
+          "identity": "observed",
+          "attributes": "reconstructed"
+        },
+        "executable": {
+          "path": "",
+          "kind": "anonymous"
+        },
+        "args": [],
+        "args_truncated": false,
+        "creds": {
+          "uid": 0,
+          "euid": 0,
+          "suid": 0,
+          "fsuid": 0,
+          "gid": 0,
+          "egid": 0,
+          "sgid": 0,
+          "fsgid": 0,
+          "groups": [],
+          "loginuid": null,
+          "sessionid": null
+        },
+        "caps": {
+          "effective": "000001ffffffffff",
+          "permitted": "000001ffffffffff",
+          "inheritable": "0000000000000000",
+          "bounding": "000001ffffffffff",
+          "ambient": "0000000000000000"
+        },
+        "seccomp": 0,
+        "no_new_privs": false,
+        "ns": {
+          "mnt": 4026531841,
+          "pid": 4026531836,
+          "net": 4026531840,
+          "user": 4026531837,
+          "uts": 4026531838,
+          "ipc": 4026531839,
+          "cgroup": 4026531835
+        },
+        "cgroup": "/",
+        "pgid": 0,
+        "sid": 0
+      }
+    ]
+  },
+  "unavailable": []
+}

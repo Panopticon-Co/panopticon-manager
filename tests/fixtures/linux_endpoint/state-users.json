@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.0",
+  "record_type": "state",
+  "id": "8cf2cba88ad7ab5253442f50fe563a40",
+  "seq": 6,
+  "type": "state.users",
+  "time": "2026-10-06T03:23:02.200364796Z",
+  "observed_time": "2026-10-06T03:23:02.200364796Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "none"
+  },
+  "provenance": {
+    "provider": "inventory",
+    "mechanism": "ETC",
+    "confidence": "observed"
+  },
+  "state": {
+    "object": "users",
+    "snapshot_id": "sensor-0104a7120230-users-4",
+    "part": 1,
+    "parts": 1,
+    "items": [
+      {
+        "name": "root",
+        "uid": 0,
+        "gid": 0,
+        "home": "/root",
+        "shell": "/bin/bash",
+        "login_shell": true,
+        "system_account": false,
+        "uid0_non_root": false,
+        "password_state": "locked"
+      },
+      {
+        "name": "daemon",
+        "uid": 1,
+        "gid": 1,
+        "home": "/usr/sbin",
+        "shell": "/usr/sbin/nologin",
+        "login_shell": false,
+        "system_account": true,
+        "uid0_non_root": false,
+        "password_state": "locked"
+      }
+    ]
+  },
+  "unavailable": []
+}

@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0",
+  "record_type": "state",
+  "id": "13e87eaecbfdba1f2d0a7984aa76c251",
+  "seq": 8,
+  "type": "state.interfaces",
+  "time": "2026-10-06T03:23:02.200364796Z",
+  "observed_time": "2026-10-06T03:23:02.200364796Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "none"
+  },
+  "provenance": {
+    "provider": "inventory",
+    "mechanism": "SYSFS+GETIFADDRS",
+    "confidence": "observed"
+  },
+  "state": {
+    "object": "interfaces",
+    "snapshot_id": "sensor-0104a7120230-interfaces-6",
+    "part": 1,
+    "parts": 1,
+    "items": [
+      {
+        "name": "eth0",
+        "mac": "08:00:27:8c:69:41",
+        "operstate": "up",
+        "mtu": 1500,
+        "arphrd_type": 1,
+        "addresses": [
+          {
+            "family": "inet",
+            "address": "10.0.2.15",
+            "prefix": 24
+          },
+          {
+            "family": "inet6",
+            "address": "fd17:625c:f037:2:a00:27ff:fe8c:6941",
+            "prefix": 64
+          }
+        ]
+      },
+      {
+        "name": "lo",
+        "mac": "00:00:00:00:00:00",
+        "operstate": "unknown",
+        "mtu": 65536,
+        "arphrd_type": 772,
+        "addresses": [
+          {
+            "family": "inet",
+            "address": "127.0.0.1",
+            "prefix": 8
+          }
+        ]
+      }
+    ]
+  },
+  "unavailable": []
+}

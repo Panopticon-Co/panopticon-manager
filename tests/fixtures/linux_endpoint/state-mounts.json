@@ -1,0 +1,73 @@
+{
+  "schema_version": "1.0",
+  "record_type": "state",
+  "id": "8840543407ef597a61ab8a08014869f3",
+  "seq": 9,
+  "type": "state.mounts",
+  "time": "2026-10-06T03:23:02.200364796Z",
+  "observed_time": "2026-10-06T03:23:02.200364796Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "none"
+  },
+  "provenance": {
+    "provider": "inventory",
+    "mechanism": "PROCFS",
+    "confidence": "observed"
+  },
+  "state": {
+    "object": "mounts",
+    "snapshot_id": "sensor-0104a7120230-mounts-7",
+    "part": 1,
+    "parts": 1,
+    "items": [
+      {
+        "mount_id": 23,
+        "parent_id": 29,
+        "device": "0:21",
+        "root": "/",
+        "mount_point": "/sys",
+        "fs_type": "sysfs",
+        "source": "sysfs",
+        "options": [
+          "rw",
+          "nosuid"
+        ],
+        "super_options": [
+          "rw"
+        ],
+        "nosuid": true,
+        "noexec": true,
+        "nodev": true,
+        "read_only": false
+      },
+      {
+        "mount_id": 24,
+        "parent_id": 29,
+        "device": "0:22",
+        "root": "/",
+        "mount_point": "/proc",
+        "fs_type": "proc",
+        "source": "proc",
+        "options": [
+          "rw",
+          "nosuid"
+        ],
+        "super_options": [
+          "rw"
+        ],
+        "nosuid": true,
+        "noexec": true,
+        "nodev": true,
+        "read_only": false
+      }
+    ]
+  },
+  "unavailable": []
+}
