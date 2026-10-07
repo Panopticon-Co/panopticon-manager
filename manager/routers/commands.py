@@ -16,10 +16,10 @@ import sqlite3
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Query
 from response_engine.contract import Action, Command, CommandResult
 
-from manager import db
+from manager import command_signing, db
 from manager.auth import require_agent_token
 from manager.timeutil import iso_now
 
@@ -79,6 +79,18 @@ def authorize_and_enqueue(
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
     )
+    # Signed here, at the authorization decision, over exactly what is stored and delivered (ADR 008). A configured
+    # key that cannot be used stops the command: it is never queued unsigned instead.
+    audit_detail = None
+    try:
+        signer = command_signing.signer()
+        if signer is not None:
+            payload["authorization"] = signer.authorization(payload)
+            audit_detail = f"signed ES256 key_id={signer.key_id}"
+    except command_signing.SigningUnavailable as exc:
+        raise HTTPException(status_code=503, detail="command signing is configured but unavailable") from exc
+    except command_signing.UnsignableCommand as exc:
+        raise HTTPException(status_code=422, detail=f"command cannot be signed: {exc}") from exc
     owns_transaction = not conn.in_transaction
     if owns_transaction:
         conn.execute("BEGIN IMMEDIATE")
@@ -95,7 +107,7 @@ def authorize_and_enqueue(
                 alert_id,
             ),
         )
-        _audit(conn, command.command_id, "created", actor)
+        _audit(conn, command.command_id, "created", actor, audit_detail)
         if owns_transaction:
             conn.commit()
     except sqlite3.IntegrityError:
@@ -143,8 +155,17 @@ def _expire_stale_commands(conn: sqlite3.Connection, now: str) -> None:
 
 
 @router.get("/api/v1/agents/{agent_id}/commands")
-async def poll(agent_id: str, authorization: str | None = Header(default=None)) -> dict:
+async def poll(
+    agent_id: str,
+    authorization: str | None = Header(default=None),
+    command_auth: str | None = Query(default=None),
+) -> dict:
+    """``command_auth=ES256`` asks for each command's signature. Without it the signature is left out, because the
+    Windows agent's command parser refuses any member it does not know; leaving it out weakens nothing, since an
+    endpoint that verifies refuses unsigned commands by itself (ADR 008)."""
     require_agent_token(agent_id, authorization)
+    if command_auth not in (None, command_signing.ALGORITHM):
+        raise HTTPException(status_code=422, detail="unsupported command_auth")
     conn = db.connect()
     now = datetime.now(timezone.utc).isoformat()
     conn.execute("BEGIN IMMEDIATE")
@@ -166,7 +187,11 @@ async def poll(agent_id: str, authorization: str | None = Header(default=None)) 
     except Exception:
         conn.rollback()
         raise
-    return {"commands": [json.loads(str(row["command_json"])) for row in rows]}
+    commands = [json.loads(str(row["command_json"])) for row in rows]
+    if command_auth is None:
+        for queued in commands:
+            queued.pop("authorization", None)
+    return {"commands": commands}
 
 
 @router.post("/api/v1/agents/{agent_id}/commands/{command_id}/accept")

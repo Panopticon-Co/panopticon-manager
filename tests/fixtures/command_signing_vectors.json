@@ -1,0 +1,220 @@
+{
+ "generated_by": "panopticon-linux-agent tests/e2e/command_signing_vectors.py (panopticon-command-signer)",
+ "public_key": "BAjM3QBg8Zli3OtBfc+AIoJOUIf70adoJZ3O2lfR45IRtY26GZFr7RBDq4Wk32v7t21o8vsvEeS3Dexd2svzQIQ=",
+ "vectors": [
+  {
+   "name": "kill_process_utc_microseconds",
+   "command": {
+    "agent_id": "agent-vectors",
+    "host_id": "host-vectors",
+    "schema_version": "1",
+    "command_id": "cmd-v1",
+    "correlation_id": "corr-v1",
+    "action": "KILL_PROCESS",
+    "created_at": "2026-10-07T12:00:00.123456+00:00",
+    "expires_at": "2026-10-07T12:05:00+00:00",
+    "target": {
+     "pid": 4242,
+     "start_time_ticks": 987654321
+    }
+   },
+   "signing_input": "panopticon-command-auth/1\nschema_version:1:1\ncommand_id:6:cmd-v1\ncorrelation_id:7:corr-v1\nagent_id:13:agent-vectors\nhost_id:12:host-vectors\naction:12:KILL_PROCESS\ncreated_at:10:1791374400\nexpires_at:10:1791374700\npid:4:4242\nstart_time_ticks:9:987654321\nboot_id:0:\npath:0:\n",
+   "signed": {
+    "agent_id": "agent-vectors",
+    "host_id": "host-vectors",
+    "schema_version": "1",
+    "command_id": "cmd-v1",
+    "correlation_id": "corr-v1",
+    "action": "KILL_PROCESS",
+    "created_at": "2026-10-07T12:00:00.123456+00:00",
+    "expires_at": "2026-10-07T12:05:00+00:00",
+    "target": {
+     "pid": 4242,
+     "start_time_ticks": 987654321
+    },
+    "authorization": {
+     "algorithm": "ES256",
+     "key_id": "adb7ce7c02e82147",
+     "signature": "bWJ2tFyJQITlLMMf0kcXuipsqBbU2rBsfyptkroIY6jQs5A3aUVQmrLI0Uto9JcRD07ktHKzq0u7Vpz5Pwjp8A=="
+    }
+   }
+  },
+  {
+   "name": "collect_process_info_z_and_offset",
+   "command": {
+    "agent_id": "agent-vectors",
+    "host_id": "host-vectors",
+    "schema_version": "1",
+    "command_id": "cmd-v2",
+    "correlation_id": "corr-v2",
+    "action": "COLLECT_PROCESS_INFO",
+    "created_at": "2026-10-07T12:00:00Z",
+    "expires_at": "2026-10-07T17:35:00+05:30",
+    "target": {
+     "pid": 1,
+     "start_time_ticks": 1
+    }
+   },
+   "signing_input": "panopticon-command-auth/1\nschema_version:1:1\ncommand_id:6:cmd-v2\ncorrelation_id:7:corr-v2\nagent_id:13:agent-vectors\nhost_id:12:host-vectors\naction:20:COLLECT_PROCESS_INFO\ncreated_at:10:1791374400\nexpires_at:10:1791374700\npid:1:1\nstart_time_ticks:1:1\nboot_id:0:\npath:0:\n",
+   "signed": {
+    "agent_id": "agent-vectors",
+    "host_id": "host-vectors",
+    "schema_version": "1",
+    "command_id": "cmd-v2",
+    "correlation_id": "corr-v2",
+    "action": "COLLECT_PROCESS_INFO",
+    "created_at": "2026-10-07T12:00:00Z",
+    "expires_at": "2026-10-07T17:35:00+05:30",
+    "target": {
+     "pid": 1,
+     "start_time_ticks": 1
+    },
+    "authorization": {
+     "algorithm": "ES256",
+     "key_id": "adb7ce7c02e82147",
+     "signature": "pBUJsqnCu64BUPcz67UZiwpoC6+C3n/hRPeO0u6KbBDUJ1tAJo7BjS6n5Fm8JrXmNqco437Ihz5Vp2oPnK1zKg=="
+    }
+   }
+  },
+  {
+   "name": "quarantine_file_unicode_path",
+   "command": {
+    "agent_id": "agent-vectors",
+    "host_id": "host-vectors",
+    "schema_version": "1",
+    "command_id": "cmd-v3",
+    "correlation_id": "corr-v3",
+    "action": "QUARANTINE_FILE",
+    "created_at": "2026-10-07T12:00:00+00:00",
+    "expires_at": "2026-10-07T12:10:00-04:00",
+    "target": {
+     "path": "/tmp/évil ☃.bin"
+    }
+   },
+   "signing_input": "panopticon-command-auth/1\nschema_version:1:1\ncommand_id:6:cmd-v3\ncorrelation_id:7:corr-v3\nagent_id:13:agent-vectors\nhost_id:12:host-vectors\naction:15:QUARANTINE_FILE\ncreated_at:10:1791374400\nexpires_at:10:1791389400\npid:1:0\nstart_time_ticks:1:0\nboot_id:0:\npath:18:/tmp/évil ☃.bin\n",
+   "signed": {
+    "agent_id": "agent-vectors",
+    "host_id": "host-vectors",
+    "schema_version": "1",
+    "command_id": "cmd-v3",
+    "correlation_id": "corr-v3",
+    "action": "QUARANTINE_FILE",
+    "created_at": "2026-10-07T12:00:00+00:00",
+    "expires_at": "2026-10-07T12:10:00-04:00",
+    "target": {
+     "path": "/tmp/évil ☃.bin"
+    },
+    "authorization": {
+     "algorithm": "ES256",
+     "key_id": "adb7ce7c02e82147",
+     "signature": "MOBSIJrL0aWT4+OP7YtFahYiT5iFLa7yll1q+ylw4aphcy3B9t11pVc79UIHyc9hxHQZKqHyCRfRtBth99hF7Q=="
+    }
+   }
+  },
+  {
+   "name": "collect_file_separator_characters",
+   "command": {
+    "agent_id": "agent-vectors",
+    "host_id": "host-vectors",
+    "schema_version": "1",
+    "command_id": "cmd-v4",
+    "correlation_id": "corr-v4",
+    "action": "COLLECT_FILE",
+    "created_at": "2026-10-07T12:00:00+00:00",
+    "expires_at": "2026-10-07T12:10:00+00:00",
+    "target": {
+     "path": "/tmp/a:12:b\nc"
+    }
+   },
+   "signing_input": "panopticon-command-auth/1\nschema_version:1:1\ncommand_id:6:cmd-v4\ncorrelation_id:7:corr-v4\nagent_id:13:agent-vectors\nhost_id:12:host-vectors\naction:12:COLLECT_FILE\ncreated_at:10:1791374400\nexpires_at:10:1791375000\npid:1:0\nstart_time_ticks:1:0\nboot_id:0:\npath:13:/tmp/a:12:b\nc\n",
+   "signed": {
+    "agent_id": "agent-vectors",
+    "host_id": "host-vectors",
+    "schema_version": "1",
+    "command_id": "cmd-v4",
+    "correlation_id": "corr-v4",
+    "action": "COLLECT_FILE",
+    "created_at": "2026-10-07T12:00:00+00:00",
+    "expires_at": "2026-10-07T12:10:00+00:00",
+    "target": {
+     "path": "/tmp/a:12:b\nc"
+    },
+    "authorization": {
+     "algorithm": "ES256",
+     "key_id": "adb7ce7c02e82147",
+     "signature": "qLt0V+N785I7X8P8mh1kAFj/y+ijKbBQGEhcW7nbzoyE/Ibgd4zuWp8q18YuyAIywkEt0Qj8gu9SmXA6zDRnIw=="
+    }
+   }
+  },
+  {
+   "name": "isolate_host_without_target",
+   "command": {
+    "agent_id": "agent-vectors",
+    "host_id": "host-vectors",
+    "schema_version": "1",
+    "command_id": "cmd-v5",
+    "correlation_id": "corr-v5",
+    "action": "ISOLATE_HOST",
+    "created_at": "2026-10-07T12:00:00+00:00",
+    "expires_at": "2026-10-07T12:10:00+00:00",
+    "target": {}
+   },
+   "signing_input": "panopticon-command-auth/1\nschema_version:1:1\ncommand_id:6:cmd-v5\ncorrelation_id:7:corr-v5\nagent_id:13:agent-vectors\nhost_id:12:host-vectors\naction:12:ISOLATE_HOST\ncreated_at:10:1791374400\nexpires_at:10:1791375000\npid:1:0\nstart_time_ticks:1:0\nboot_id:0:\npath:0:\n",
+   "signed": {
+    "agent_id": "agent-vectors",
+    "host_id": "host-vectors",
+    "schema_version": "1",
+    "command_id": "cmd-v5",
+    "correlation_id": "corr-v5",
+    "action": "ISOLATE_HOST",
+    "created_at": "2026-10-07T12:00:00+00:00",
+    "expires_at": "2026-10-07T12:10:00+00:00",
+    "target": {},
+    "authorization": {
+     "algorithm": "ES256",
+     "key_id": "adb7ce7c02e82147",
+     "signature": "iccNkEdDWhx3K4snzCAyABz1dZry0DNXGhT0G2jyin44V/dHxXx/aOXIRySVUc3wam8Qh1yuafW36Uqosp4xgA=="
+    }
+   }
+  },
+  {
+   "name": "boot_bound_process_schema_2",
+   "command": {
+    "agent_id": "agent-vectors",
+    "host_id": "host-vectors",
+    "schema_version": "2",
+    "command_id": "cmd-v6",
+    "correlation_id": "corr-v6",
+    "action": "KILL_PROCESS",
+    "created_at": "2026-10-07T12:00:00+00:00",
+    "expires_at": "2026-10-07T12:10:00+00:00",
+    "target": {
+     "pid": 77,
+     "start_time_ticks": "18446744073709551615",
+     "boot_id": "boot_a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    }
+   },
+   "signing_input": "panopticon-command-auth/1\nschema_version:1:2\ncommand_id:6:cmd-v6\ncorrelation_id:7:corr-v6\nagent_id:13:agent-vectors\nhost_id:12:host-vectors\naction:12:KILL_PROCESS\ncreated_at:10:1791374400\nexpires_at:10:1791375000\npid:2:77\nstart_time_ticks:20:18446744073709551615\nboot_id:69:boot_a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\npath:0:\n",
+   "signed": {
+    "agent_id": "agent-vectors",
+    "host_id": "host-vectors",
+    "schema_version": "2",
+    "command_id": "cmd-v6",
+    "correlation_id": "corr-v6",
+    "action": "KILL_PROCESS",
+    "created_at": "2026-10-07T12:00:00+00:00",
+    "expires_at": "2026-10-07T12:10:00+00:00",
+    "target": {
+     "pid": 77,
+     "start_time_ticks": "18446744073709551615",
+     "boot_id": "boot_a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    },
+    "authorization": {
+     "algorithm": "ES256",
+     "key_id": "adb7ce7c02e82147",
+     "signature": "F8o+6aKQoa1X/vAxp74jS1vmrId0rp+BWoom5yA97sSr+p2ZCUcKhYbm38KMfXb7BBI36FTRJp8DCBI/wuGU1g=="
+    }
+   }
+  }
+ ]
+}
