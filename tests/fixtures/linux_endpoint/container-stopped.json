@@ -1,0 +1,128 @@
+{
+  "schema_version": "1.0",
+  "record_type": "event",
+  "id": "dec49470e8ca5b279267c5201b0cc896",
+  "seq": 325,
+  "type": "container.stopped",
+  "time": "2026-10-07T13:40:30.066207953Z",
+  "observed_time": "2026-10-07T13:40:30.090366607Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "contract-e2e/1"
+  },
+  "provenance": {
+    "provider": "sensor",
+    "mechanism": "container_tracker",
+    "confidence": "inferred"
+  },
+  "process": {
+    "entity_id": "4800ce840ff85b915f48195265a3c8d4",
+    "exec_gen": 2,
+    "pid": 354733,
+    "vpid": 1,
+    "ppid": 354708,
+    "start_time": "2026-10-07T13:40:26.709976206Z",
+    "start_ticks": 2343717,
+    "name": "sleep",
+    "state": "S",
+    "kernel_thread": false,
+    "threads": 1,
+    "confidence": {
+      "identity": "observed",
+      "attributes": "observed"
+    },
+    "executable": {
+      "path": "/bin/busybox",
+      "kind": "file",
+      "dev": 47,
+      "inode": 394523,
+      "size": 804616,
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "setuid": false,
+      "setgid": false
+    },
+    "args": [
+      "sleep",
+      "1"
+    ],
+    "args_truncated": false,
+    "stdio": {
+      "stdin": "null",
+      "stdout": "pipe",
+      "stderr": "pipe"
+    },
+    "cwd": "/",
+    "creds": {
+      "uid": 0,
+      "euid": 0,
+      "suid": 0,
+      "fsuid": 0,
+      "gid": 0,
+      "egid": 0,
+      "sgid": 0,
+      "fsgid": 0,
+      "groups": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        6,
+        10,
+        11,
+        20,
+        26,
+        27
+      ],
+      "loginuid": null,
+      "sessionid": null
+    },
+    "caps": {
+      "effective": "00000000a80425fb",
+      "permitted": "00000000a80425fb",
+      "inheritable": "0000000000000000",
+      "bounding": "00000000a80425fb",
+      "ambient": "0000000000000000"
+    },
+    "seccomp": 2,
+    "no_new_privs": false,
+    "ns": {
+      "mnt": 4026532265,
+      "pid": 4026532268,
+      "net": 4026532270,
+      "user": 4026531837,
+      "uts": 4026532266,
+      "ipc": 4026532267,
+      "cgroup": 4026532269
+    },
+    "cgroup": "/system.slice/docker-1c81d5bdc05ff600e3281ba9025b57b3fed130f5b13490795300161ecc283113.scope",
+    "unit": "docker-1c81d5bdc05ff600e3281ba9025b57b3fed130f5b13490795300161ecc283113.scope",
+    "container": {
+      "id": "1c81d5bdc05ff600e3281ba9025b57b3fed130f5b13490795300161ecc283113",
+      "runtime": "docker"
+    },
+    "pgid": 354733,
+    "sid": 354733,
+    "env": {
+      "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    }
+  },
+  "container": {
+    "id": "1c81d5bdc05ff600e3281ba9025b57b3fed130f5b13490795300161ecc283113",
+    "runtime": "docker",
+    "cgroup": "/system.slice/docker-1c81d5bdc05ff600e3281ba9025b57b3fed130f5b13490795300161ecc283113.scope",
+    "start_observed": true,
+    "lifetime_ns": 1042772439,
+    "peak_processes": 1
+  },
+  "unavailable": []
+}

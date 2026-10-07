@@ -1,0 +1,122 @@
+{
+  "schema_version": "1.0",
+  "record_type": "event",
+  "id": "5a6b2caf101f0f6da48d67412e31884e",
+  "seq": 34,
+  "type": "policy.match",
+  "time": "2026-10-07T13:35:11.905600627Z",
+  "observed_time": "2026-10-07T13:35:11.926673227Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "pol-e2e/3"
+  },
+  "provenance": {
+    "provider": "policy",
+    "mechanism": "POLICY",
+    "confidence": "inferred"
+  },
+  "process": {
+    "entity_id": "c6fcb9235a0b4634ea160512038e4298",
+    "exec_gen": 1,
+    "pid": 354322,
+    "vpid": 354322,
+    "ppid": 354254,
+    "start_time": "2026-10-07T13:35:11.899976226Z",
+    "start_ticks": 2312236,
+    "name": "sleeper",
+    "state": "S",
+    "kernel_thread": false,
+    "threads": 1,
+    "confidence": {
+      "identity": "observed",
+      "attributes": "observed"
+    },
+    "executable": {
+      "path": "/tmp/polbin/sleeper",
+      "kind": "file",
+      "dev": 64768,
+      "inode": 3145954,
+      "size": 35328,
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "setuid": false,
+      "setgid": false
+    },
+    "args": [
+      "bash",
+      "-c",
+      "exec -a sleeper-EXFIL-MARK /tmp/polbin/sleeper 30"
+    ],
+    "args_truncated": false,
+    "stdio": {
+      "stdin": "null",
+      "stdout": "pipe",
+      "stderr": "pipe"
+    },
+    "cwd": "/home/vagrant/src/panopticon-linux-agent",
+    "creds": {
+      "uid": 1000,
+      "euid": 1000,
+      "suid": 1000,
+      "fsuid": 1000,
+      "gid": 1000,
+      "egid": 1000,
+      "sgid": 1000,
+      "fsgid": 1000,
+      "groups": [
+        1000
+      ],
+      "loginuid": 1000,
+      "sessionid": 772
+    },
+    "caps": {
+      "effective": "0000000000000000",
+      "permitted": "0000000000000000",
+      "inheritable": "0000000000000000",
+      "bounding": "000001ffffffffff",
+      "ambient": "0000000000000000"
+    },
+    "seccomp": 0,
+    "no_new_privs": false,
+    "ns": {
+      "mnt": 4026531841,
+      "pid": 4026531836,
+      "net": 4026531840,
+      "user": 4026531837,
+      "uts": 4026531838,
+      "ipc": 4026531839,
+      "cgroup": 4026531835
+    },
+    "cgroup": "/user.slice/user-1000.slice/session-772.scope",
+    "unit": "session-772.scope",
+    "pgid": 354254,
+    "sid": 354254,
+    "env": {
+      "PATH": "/home/vagrant/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+      "SSH_CLIENT": "10.0.2.2 47050 22",
+      "SSH_CONNECTION": "10.0.2.2 47050 10.0.2.15 22"
+    }
+  },
+  "policy": {
+    "outcome": "match",
+    "policy_id": "pol-e2e",
+    "version": 3,
+    "rule_id": "tmp-exec",
+    "action": "recommend_terminate",
+    "severity": "high",
+    "field": "exe",
+    "matched": "/tmp/polbin/sleeper",
+    "subject": {
+      "type": "process.exec",
+      "seq": 33
+    }
+  },
+  "unavailable": []
+}

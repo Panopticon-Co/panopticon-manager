@@ -63,7 +63,7 @@ def test_every_real_record_type_is_accepted(client: TestClient, enrolled: str) -
     response = client.post(URL, content=body(records), headers=headers(enrolled))
     assert response.status_code == 200, response.text
     data = response.json()
-    assert data["accepted"] == len(names) == 30
+    assert data["accepted"] == len(names) == 38
     assert data["rejected"] == []
     assert data["streams"][0]["acked_through_seq"] == len(names)
     assert data["streams"][0]["missing_ranges"] == []
@@ -214,3 +214,22 @@ def test_a_response_record_needs_its_body_and_a_closed_action(client: TestClient
     data = response.json()
     assert data["accepted"] == 1
     assert [r["reason"] for r in data["rejected"]] == ["schema_invalid"] * 3
+
+
+def test_a_policy_decision_is_a_recommendation_with_its_subject(client: TestClient, enrolled: str) -> None:
+    # A local policy decides; it never acts. A match whose action is not one of the recommendations, that lost
+    # the record it is about, or that mixes in change fields, is not a policy record.
+    missing = numbered("policy-match", 1)
+    del missing["policy"]
+    acting = numbered("policy-match", 2)
+    acting["policy"]["action"] = "kill"
+    orphan = numbered("policy-match", 3)
+    del orphan["policy"]["subject"]
+    mixed = numbered("policy-change", 4)
+    mixed["policy"]["rule_id"] = "tmp-exec"
+    good = [numbered("policy-match", 5), numbered("policy-change", 6)]
+    response = client.post(URL, content=body([missing, acting, orphan, mixed, *good]), headers=headers(enrolled))
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["accepted"] == 2
+    assert [r["reason"] for r in data["rejected"]] == ["schema_invalid"] * 4

@@ -125,6 +125,18 @@
     },
     "response": {
       "$ref": "#/$defs/Response"
+    },
+    "policy": {
+      "$ref": "#/$defs/Policy"
+    },
+    "signal": {
+      "$ref": "#/$defs/Signal"
+    },
+    "socket": {
+      "$ref": "#/$defs/Socket"
+    },
+    "container": {
+      "$ref": "#/$defs/ContainerLifecycle"
     }
   },
   "required": [
@@ -251,7 +263,10 @@
       "if": {
         "properties": {
           "type": {
-            "pattern": "^network\\."
+            "pattern": "^network\\.",
+            "not": {
+              "const": "network.raw_socket"
+            }
           }
         },
         "required": [
@@ -521,6 +536,269 @@
         "required": [
           "response"
         ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^policy\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "policy"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "policy.match"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "policy": {
+            "properties": {
+              "outcome": {
+                "const": "match"
+              },
+              "reason": false,
+              "detail": false,
+              "previous_version": false,
+              "key_id": false,
+              "rules": false,
+              "indicators": false,
+              "expires_at": false
+            },
+            "required": [
+              "policy_id",
+              "version",
+              "rule_id",
+              "action",
+              "severity",
+              "field",
+              "matched",
+              "subject"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "policy.change"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "policy": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "loaded",
+                  "rejected",
+                  "expired",
+                  "removed"
+                ]
+              },
+              "rule_id": false,
+              "action": false,
+              "severity": false,
+              "field": false,
+              "matched": false,
+              "subject": false
+            },
+            "required": [
+              "reason",
+              "detail"
+            ],
+            "if": {
+              "properties": {
+                "outcome": {
+                  "enum": [
+                    "loaded",
+                    "expired",
+                    "removed"
+                  ]
+                }
+              },
+              "required": [
+                "outcome"
+              ]
+            },
+            "then": {
+              "required": [
+                "policy_id",
+                "version",
+                "key_id",
+                "rules",
+                "indicators",
+                "expires_at"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "network.raw_socket"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "process",
+          "socket"
+        ],
+        "not": {
+          "required": [
+            "network"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "process.signal"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "process",
+          "signal"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "network.close"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "network": {
+            "required": [
+              "bytes_sent",
+              "bytes_received"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^container\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "container"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "container.stopped"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "container": {
+            "required": [
+              "start_observed",
+              "peak_processes"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "signal"
+        ]
+      },
+      "then": {
+        "properties": {
+          "type": {
+            "const": "process.signal"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "socket"
+        ]
+      },
+      "then": {
+        "properties": {
+          "type": {
+            "const": "network.raw_socket"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "container"
+        ]
+      },
+      "then": {
+        "properties": {
+          "type": {
+            "pattern": "^container\\."
+          }
+        }
       }
     }
   ],
@@ -1027,6 +1305,57 @@
           "items": {
             "$ref": "#/$defs/Ancestor"
           }
+        },
+        "stdio": {
+          "type": "object",
+          "properties": {
+            "stdin": {
+              "enum": [
+                "closed",
+                "socket",
+                "pipe",
+                "tty",
+                "file",
+                "null",
+                "other"
+              ]
+            },
+            "stdout": {
+              "enum": [
+                "closed",
+                "socket",
+                "pipe",
+                "tty",
+                "file",
+                "null",
+                "other"
+              ]
+            },
+            "stderr": {
+              "enum": [
+                "closed",
+                "socket",
+                "pipe",
+                "tty",
+                "file",
+                "null",
+                "other"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "stdin",
+            "stdout",
+            "stderr"
+          ]
+        },
+        "interpreter": {
+          "type": "string",
+          "minLength": 1
+        },
+        "script": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1047,7 +1376,12 @@
         "ns",
         "pgid",
         "sid"
-      ]
+      ],
+      "dependentRequired": {
+        "interpreter": [
+          "script"
+        ]
+      }
     },
     "ProcessStub": {
       "type": "object",
@@ -1189,7 +1523,8 @@
           "enum": [
             "outbound",
             "inbound",
-            "listen"
+            "listen",
+            "unknown"
           ]
         },
         "local": {
@@ -1244,6 +1579,18 @@
           "minimum": 0
         },
         "holders": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bytes_sent": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bytes_received": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duration_ns": {
           "type": "integer",
           "minimum": 0
         }
@@ -2221,6 +2568,235 @@
         "reason",
         "dry_run",
         "executed"
+      ]
+    },
+    "Policy": {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "enum": [
+            "match",
+            "loaded",
+            "rejected",
+            "expired",
+            "removed"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "pattern": "^[a-z_]{1,48}$"
+        },
+        "policy_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,128}$"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "previous_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "key_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "rules": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "indicators": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expires_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "rule_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._*-]{1,64}$"
+        },
+        "action": {
+          "enum": [
+            "alert",
+            "recommend_terminate",
+            "recommend_quarantine",
+            "recommend_block"
+          ]
+        },
+        "severity": {
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        "field": {
+          "enum": [
+            "exe",
+            "cmdline",
+            "sha256",
+            "file_path",
+            "dest_ip",
+            "dest_domain"
+          ]
+        },
+        "matched": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "subject": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)?$"
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "seq"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 1024
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "outcome"
+      ]
+    },
+    "Signal": {
+      "type": "object",
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "via": {
+          "enum": [
+            "kill",
+            "tgkill",
+            "sigqueue",
+            "other"
+          ]
+        },
+        "result": {
+          "enum": [
+            "delivered",
+            "ignored",
+            "already_pending",
+            "overflow",
+            "info_lost"
+          ]
+        },
+        "target_is_sensor": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "number",
+        "name",
+        "via",
+        "result",
+        "target_is_sensor"
+      ]
+    },
+    "Socket": {
+      "type": "object",
+      "properties": {
+        "family": {
+          "enum": [
+            "inet",
+            "inet6",
+            "packet"
+          ]
+        },
+        "type": {
+          "enum": [
+            "stream",
+            "dgram",
+            "raw",
+            "rdm",
+            "seqpacket",
+            "dccp",
+            "packet"
+          ]
+        },
+        "protocol": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "protocol_name": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "family",
+        "type",
+        "protocol"
+      ]
+    },
+    "ContainerLifecycle": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{12,64}$"
+        },
+        "runtime": {
+          "enum": [
+            "docker",
+            "containerd",
+            "crio",
+            "podman",
+            "kubernetes"
+          ]
+        },
+        "pod_uid": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "cgroup": {
+          "type": "string",
+          "minLength": 1
+        },
+        "start_observed": {
+          "type": "boolean"
+        },
+        "lifetime_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "peak_processes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "runtime",
+        "cgroup"
       ]
     }
   }

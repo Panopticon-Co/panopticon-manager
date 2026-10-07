@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "record_type": "event",
+  "id": "1530d82e3009f564e1fa66bac5ea660b",
+  "seq": 767,
+  "type": "policy.change",
+  "time": "2026-10-07T13:35:53.301501324Z",
+  "observed_time": "2026-10-07T13:35:53.301501324Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "pol-e2e/3"
+  },
+  "provenance": {
+    "provider": "policy",
+    "mechanism": "POLICY-FILE",
+    "confidence": "observed"
+  },
+  "policy": {
+    "outcome": "loaded",
+    "reason": "updated",
+    "policy_id": "pol-e2e",
+    "version": 6,
+    "key_id": "570c7d6a61507cc4",
+    "rules": 4,
+    "indicators": 2,
+    "expires_at": "2026-10-07T13:36:10.000000000Z",
+    "previous_version": 3,
+    "detail": "replaces version 3"
+  },
+  "unavailable": []
+}
