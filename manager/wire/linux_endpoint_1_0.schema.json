@@ -137,6 +137,9 @@
     },
     "container": {
       "$ref": "#/$defs/ContainerLifecycle"
+    },
+    "tamper": {
+      "$ref": "#/$defs/Tamper"
     }
   },
   "required": [
@@ -559,6 +562,23 @@
       "if": {
         "properties": {
           "type": {
+            "pattern": "^tamper\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "tamper"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
             "const": "policy.match"
           }
         },
@@ -797,6 +817,20 @@
         "properties": {
           "type": {
             "pattern": "^container\\."
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "tamper"
+        ]
+      },
+      "then": {
+        "properties": {
+          "type": {
+            "pattern": "^tamper\\."
           }
         }
       }
@@ -2797,6 +2831,92 @@
         "id",
         "runtime",
         "cgroup"
+      ]
+    },
+    "Tamper": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "violated",
+            "restored"
+          ]
+        },
+        "technique": {
+          "enum": [
+            "binary_modified",
+            "binary_missing",
+            "binary_replaced",
+            "manifest_invalid",
+            "manifest_missing",
+            "manifest_rollback"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "expected_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "observed_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "manifest_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "key_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "files_checked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "files_in_violation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_change": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "enum": [
+                "create",
+                "modify",
+                "delete",
+                "rename",
+                "attrib"
+              ]
+            },
+            "time": {
+              "$ref": "#/$defs/Timestamp"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "operation",
+            "time"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 1024
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "technique",
+        "target",
+        "files_checked",
+        "files_in_violation",
+        "detail"
       ]
     }
   }

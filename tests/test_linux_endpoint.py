@@ -63,7 +63,7 @@ def test_every_real_record_type_is_accepted(client: TestClient, enrolled: str) -
     response = client.post(URL, content=body(records), headers=headers(enrolled))
     assert response.status_code == 200, response.text
     data = response.json()
-    assert data["accepted"] == len(names) == 38
+    assert data["accepted"] == len(names) == 41
     assert data["rejected"] == []
     assert data["streams"][0]["acked_through_seq"] == len(names)
     assert data["streams"][0]["missing_ranges"] == []

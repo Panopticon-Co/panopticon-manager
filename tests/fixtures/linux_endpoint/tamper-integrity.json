@@ -1,0 +1,119 @@
+{
+  "schema_version": "1.0",
+  "record_type": "event",
+  "id": "18a2250cfc5aec45586b1ba6b69c3ba7",
+  "seq": 2543,
+  "type": "tamper.integrity",
+  "time": "2026-10-07T21:14:54.877626022Z",
+  "observed_time": "2026-10-07T21:14:54.877626022Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "none"
+  },
+  "provenance": {
+    "provider": "integrity",
+    "mechanism": "BUILD-MANIFEST",
+    "confidence": "observed"
+  },
+  "process": {
+    "entity_id": "f3639bd1d46f3f89991a9f834632a73d",
+    "exec_gen": 1,
+    "pid": 351072,
+    "vpid": 351072,
+    "ppid": 350424,
+    "start_time": "2026-10-07T21:14:45.816922352Z",
+    "start_ticks": 1355448,
+    "name": "bash",
+    "state": "S",
+    "kernel_thread": false,
+    "threads": 1,
+    "confidence": {
+      "identity": "observed",
+      "attributes": "observed"
+    },
+    "executable": {
+      "path": "/usr/bin/bash",
+      "kind": "file"
+    },
+    "args": [
+      "bash",
+      "-c",
+      "echo $$ >/var/tmp/integrity-e2e/tamperer.pid; echo tampered >>/var/tmp/integrity-e2e/bin/panopticon-ctl"
+    ],
+    "args_truncated": false,
+    "stdio": {
+      "stdin": "null",
+      "stdout": "file",
+      "stderr": "file"
+    },
+    "cwd": "/home/vagrant/src/panopticon-linux-agent",
+    "creds": {
+      "uid": 0,
+      "euid": 0,
+      "suid": 0,
+      "fsuid": 0,
+      "gid": 0,
+      "egid": 0,
+      "sgid": 0,
+      "fsgid": 0,
+      "groups": [
+        0
+      ],
+      "loginuid": 1000,
+      "sessionid": 129
+    },
+    "caps": {
+      "effective": "000001ffffffffff",
+      "permitted": "000001ffffffffff",
+      "inheritable": "0000000000000000",
+      "bounding": "000001ffffffffff",
+      "ambient": "0000000000000000"
+    },
+    "seccomp": 0,
+    "no_new_privs": false,
+    "ns": {
+      "mnt": 4026531841,
+      "pid": 4026531836,
+      "net": 4026531840,
+      "user": 4026531837,
+      "uts": 4026531838,
+      "ipc": 4026531839,
+      "cgroup": 4026531835
+    },
+    "cgroup": "/user.slice/user-1000.slice/session-129.scope",
+    "unit": "session-129.scope",
+    "pgid": 350420,
+    "sid": 350420,
+    "env": {
+      "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin",
+      "SSH_CLIENT": "10.0.2.2 61773 22",
+      "SSH_CONNECTION": "10.0.2.2 61773 10.0.2.15 22",
+      "SUDO_COMMAND": "/usr/bin/bash tests/e2e/run_integrity_e2e.sh",
+      "SUDO_UID": "1000",
+      "SUDO_USER": "vagrant"
+    }
+  },
+  "tamper": {
+    "status": "violated",
+    "technique": "binary_modified",
+    "target": "/var/tmp/integrity-e2e/bin/panopticon-ctl",
+    "expected_sha256": "42f7ed7bff9ed7643b0a9c9cf7bb097b32b56bfa601e98a5ceee2a962f30f8a3",
+    "observed_sha256": "e1705acd78acf474db63354cc5b7c0338f95a172d5f354cf161e471e28be3d3b",
+    "manifest_version": "0.0.1-e2e",
+    "key_id": "4f22f98bf0cd9cf7",
+    "files_checked": 2,
+    "files_in_violation": 1,
+    "last_change": {
+      "operation": "modify",
+      "time": "2026-10-07T21:14:45.867554431Z"
+    },
+    "detail": "/var/tmp/integrity-e2e/bin/panopticon-ctl differs from the build manifest (size 369009, expected 369000)"
+  },
+  "unavailable": []
+}
