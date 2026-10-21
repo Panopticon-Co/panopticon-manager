@@ -1,0 +1,62 @@
+﻿{
+    "captured_at_utc":  "2026-09-13T11:26:31.1742724Z",
+    "purpose":  "source baseline, not a deployable release",
+    "repositories":  [
+                         {
+                             "name":  "panopticon-agent",
+                             "commit":  "5d53085f17b285d50f35880aca9cc2ac4baa3313",
+                             "dirty":  false,
+                             "submodules":  [
+
+                                            ]
+                         },
+                         {
+                             "name":  "panopticon-console",
+                             "commit":  "55bdff94d1c2320d757c335bddb0b7bc1a7c578f",
+                             "dirty":  false,
+                             "submodules":  [
+
+                                            ]
+                         },
+                         {
+                             "name":  "panopticon-detection-engine",
+                             "commit":  "b43f3176dc72cb7bb255a194f53db90f9cc4c746",
+                             "dirty":  false,
+                             "submodules":  [
+
+                                            ]
+                         },
+                         {
+                             "name":  "panopticon-diagrams",
+                             "commit":  "1c15cea82c50590de02940e47532fadf04bd987f",
+                             "dirty":  false,
+                             "submodules":  [
+
+                                            ]
+                         },
+                         {
+                             "name":  "panopticon-linux-agent",
+                             "commit":  "a2ee97a4c9a2c663eec329cc99c747e656650d83",
+                             "dirty":  false,
+                             "submodules":  [
+
+                                            ]
+                         },
+                         {
+                             "name":  "panopticon-manager",
+                             "commit":  "011f904d986b0f709ff947ec5a0fd8ff7c461d3e",
+                             "dirty":  true,
+                             "submodules":  [
+                                                " 3dc75d8912038fff9a059eb2636e1c2d920820fa vendor/eyedetect (v1.1.0-1-g3dc75d8)"
+                                            ]
+                         },
+                         {
+                             "name":  "panopticon-response-engine",
+                             "commit":  "36df898bfdf3f3bb81b209431314f66c5da8d4f1",
+                             "dirty":  false,
+                             "submodules":  [
+
+                                            ]
+                         }
+                     ]
+}
