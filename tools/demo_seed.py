@@ -135,10 +135,12 @@ def main(argv: list[str] | None = None) -> int:
     )["access_token"]
     auth = {"Authorization": f"Bearer {analyst}"}
 
+    agent_tokens: dict[str, str] = {}
     for scenario in args.scenario or DEFAULT_SCENARIOS:
         host = _host_of(scenario)
         agent_id = f"demo-{host.lower()}{args.suffix}"
         token = enroll_agent(base, agent_id, host, enroll_secret)
+        agent_tokens[agent_id] = token
         print(f"[*] {scenario}: agent {agent_id} on {host}")
         code = fake_agent.main(
             [
@@ -170,8 +172,10 @@ def main(argv: list[str] | None = None) -> int:
     for action in pending["response_actions"]:
         print(f"    PENDING {action['response_id']} {action['action']} {action['target']}")
 
-    print("\nAnalyst token (for the console / curl):")
+    print("\nTokens (for the console / curl; an agent token stands in for the agent):")
     print(f"  export ANALYST={analyst}")
+    for agent_id, token in agent_tokens.items():
+        print(f"  export AGENT_{agent_id.replace('-', '_').upper()}={token}")
     print(f'  curl -s -H "Authorization: Bearer $ANALYST" {base}/api/v1/incidents')
     print(f'  curl -s -H "Authorization: Bearer $ANALYST" {base}/api/v1/incidents/<incident_id>')
     print(

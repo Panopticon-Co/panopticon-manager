@@ -1,5 +1,101 @@
 # Panopticon Manager — Capstone Demo Runbook
 
+## Capstone demo (current)
+
+Verified 2026-10-25 on branch `claude/blissful-lamport-qk32ab`,
+`vendor/eyedetect` at `cd4153b`. Everything below the next heading is the
+older runbook, kept for history; where it disagrees with this section, this
+section wins. Contract: `vendor/eyedetect/docs/integration/CONTRACT.md`.
+
+What it shows: engine corpus scenarios (schema-0.3 agent telemetry) ingested
+over `POST /api/v1/ingest`, turned into causal **incidents** by the single
+detection thread, persisted (`incidents`, `incident_alerts`,
+`incident_audit`), and served to an analyst, who approves a `KILL_PROCESS`
+that an agent then polls, accepts and reports on.
+
+```bash
+# 0. once
+git submodule update --init
+pip install -r requirements.txt -r vendor/eyedetect/requirements.txt
+
+# 1. terminal A: the manager (fresh DB per demo)
+export PANOPTICON_ENROLLMENT_TOKEN=demo-enroll
+export PANOPTICON_ANALYST_ENROLLMENT_TOKEN=demo-analyst
+PANOPTICON_DB_PATH=demo.db PANOPTICON_ALERTS_PATH=demo-alerts.ndjson \
+  uvicorn manager.app:app --port 8000
+
+# 2. terminal B: seed it (same two secrets exported); starts nothing itself
+export PANOPTICON_ENROLLMENT_TOKEN=demo-enroll
+export PANOPTICON_ANALYST_ENROLLMENT_TOKEN=demo-analyst
+python tools/demo_seed.py --url http://127.0.0.1:8000
+```
+
+`demo_seed.py` enrolls analyst `demo-analyst` and one agent per scenario host
+(`demo-ws-alice`, `demo-ws-carol`, `demo-ws-erin`, real ECDSA proof of
+possession), then replays `office_macro_to_c2_and_persistence`,
+`download_execute_lsass_dump` and `benign_workstation` through
+`tools/fake_agent.py --rebase-time --etw-twins`:
+
+- `--rebase-time` moves the scenario to now, so the worker's wall-clock graph
+  pruning (`GRAPH_RETENTION`) cannot drop it mid-demo.
+- `--etw-twins` sends each process start the way the live agent does: an ETW
+  Kernel-Process report carrying `start_time_ticks` (a FILETIME), then the
+  Sysmon report. Without twins every kill recommendation fails closed
+  (`REJECTED`, "fail closed: ... no target_start_time_ticks"), which is also
+  worth showing.
+
+Expected output (ids differ per run): 179 events done, 2 open incidents —
+`WS-ALICE` rooted at `winword.exe` (revision 2: Execution, Command and
+Control, Persistence) and `WS-CAROL` rooted at `invoice_2026.exe` (Execution,
+Credential Access) — none for the benign `WS-ERIN`; 5 `PENDING`
+`KILL_PROCESS` (one per process, repeats recorded `REJECTED` "duplicate of
+…"), 2 `AUTHORIZED` auto-safe `COLLECT_NETWORK_CONNECTIONS`. It ends by
+printing `export ANALYST=…` and `export AGENT_DEMO_WS_CAROL=…` lines; paste
+them, then:
+
+```bash
+B=http://127.0.0.1:8000; A="Authorization: Bearer $ANALYST"
+curl -s -H "$A" $B/api/v1/status
+curl -s -H "$A" "$B/api/v1/incidents?status=open"
+INC=$(curl -s -H "$A" "$B/api/v1/incidents?host_id=WS-CAROL" \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["incidents"][0]["incident_id"])')
+curl -s -H "$A" $B/api/v1/incidents/$INC     # stages, causal_path, why, members, actions, audit
+
+# approve the kill of the LSASS-dumping rundll32 (pid 5600)
+RID=$(curl -s -H "$A" $B/api/v1/incidents/$INC | python -c 'import json,sys
+d=json.load(sys.stdin)
+print(next(a["response_id"] for a in d["response_actions"]
+           if a["lifecycle_state"]=="PENDING" and a["target"]["pid"]==5600))')
+curl -s -X POST -H "$A" $B/api/v1/response-actions/$RID/authorize
+
+# the agent side (what officer-agent does): poll, accept, report
+G="Authorization: Bearer $AGENT_DEMO_WS_CAROL"
+CMD=$(curl -s -H "$G" $B/api/v1/agents/demo-ws-carol/commands)
+echo "$CMD"                                  # KILL_PROCESS {pid, start_time_ticks}
+CID=$(echo "$CMD" | python -c 'import json,sys; c=[c for c in json.load(sys.stdin)["commands"] if c["action"]=="KILL_PROCESS"][0]; print(c["command_id"], c["correlation_id"])')
+set -- $CID
+curl -s -X POST -H "$G" $B/api/v1/agents/demo-ws-carol/commands/$1/accept
+curl -s -X POST -H "$G" -H 'Content-Type: application/json' \
+  -d "{\"result_id\":\"demo-r1\",\"command_id\":\"$1\",\"outcome\":\"succeeded\",\"detail\":\"simulated\",\"correlation_id\":\"$2\"}" \
+  $B/api/v1/agents/demo-ws-carol/command-results
+curl -s -H "$A" "$B/api/v1/response-actions?state=AUTHORIZED"   # command_lifecycle_state SUCCEEDED + audit
+
+# close the incident
+curl -s -X POST -H "$A" -H 'Content-Type: application/json' \
+  -d '{"status":"resolved","note":"payload killed"}' $B/api/v1/incidents/$INC/status
+```
+
+No step executes anything on a host: the "agent" here is curl, and the real
+agents' command handlers are the only place a command takes effect.
+
+The same flow runs as a deterministic test: `pytest -v tests/test_capstone_e2e.py`
+(real app + the worker's own `run_once`, including re-ingest and a
+fresh-engine replay adding zero rows).
+
+---
+
+# Earlier runbook (Phase 14/15, historical)
+
 Last verified: 2026-09-14, against `panopticon-manager` @ `main` (commit
 `1be8b18`), `vendor/eyedetect` pinned at `98b1c18`, `vendor/response_engine`
 pinned at `8b521aa`. Manager's full suite: **138 passed** (`pytest -v tests/`,
