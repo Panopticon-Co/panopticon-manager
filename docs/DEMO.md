@@ -3,7 +3,7 @@
 ## Capstone demo (current)
 
 Verified 2026-10-25 on branch `claude/blissful-lamport-qk32ab`,
-`vendor/eyedetect` at `cd4153b`. Everything below the next heading is the
+`vendor/eyedetect` at `39a3f4e`. Everything below the next heading is the
 older runbook, kept for history; where it disagrees with this section, this
 section wins. Contract: `vendor/eyedetect/docs/integration/CONTRACT.md`.
 
