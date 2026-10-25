@@ -1,5 +1,9 @@
 # Panopticon VMware Lab — Progress Update
 
+> Historical September lab report. For the replacement `PANO-NEW-*` lab and
+> October Linux enrollment verification, see
+> [New Linux lab enrollment](NEW_LINUX_LAB_ENROLLMENT.md).
+
 **From:** Rishi
 **To:** Shreyas
 **Date:** 14 September 2026
