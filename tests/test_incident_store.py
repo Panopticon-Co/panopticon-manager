@@ -211,3 +211,17 @@ def test_engine_revision_never_overwrites_analyst_status() -> None:
 def test_set_status_unknown_incident_returns_false() -> None:
     conn = _conn()
     assert set_incident_status(conn, "INC-NOPE", "resolved", actor="analyst:a", note=None) is False
+
+
+def test_seen_window_normalizes_engine_stage_time_format() -> None:
+    conn = _conn()
+    _seed_stages(conn, _S1, _S2)
+    alert = _incident_alert(1, [_S1, _S2], ["Execution", "C2"])
+    # Incident stage times arrive as naive-UTC isoformat, not wire strings.
+    alert["evidence"]["stages"][0]["time"] = "2026-09-15T09:00:00.250000"
+    _persist(conn, alert)
+    inc = conn.execute("SELECT first_seen, last_seen FROM incidents").fetchone()
+    assert (inc["first_seen"], inc["last_seen"]) == (
+        "2026-09-15T09:00:00.250Z",
+        "2026-09-15T09:00:05.000Z",
+    )

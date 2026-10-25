@@ -12,10 +12,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from manager.timeutil import iso_now
+from manager.timeutil import iso_at, iso_now
 
 _COLUMNS = (
     "alert_id",
@@ -120,17 +121,32 @@ def _revision_of(record: dict, evidence: dict) -> int:
     return 0
 
 
+def _normalize_ts(value: Any) -> str | None:
+    """An engine timestamp as the manager's ``YYYY-MM-DDTHH:MM:SS.mmmZ``.
+
+    Alert timestamps arrive as wire strings (``...000Z``) but incident stage
+    times as naive-UTC ``isoformat()`` (``...000000``); normalizing both makes
+    first_seen/last_seen one shape that sorts as time. Unparseable -> None."""
+    if not value:
+        return None
+    text = str(value).strip()
+    if text.endswith("Z"):
+        text = text[:-1]
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(timezone.utc).replace(tzinfo=None)
+    return iso_at(moment)
+
+
 def _seen_window(record: dict, evidence: dict) -> tuple[str | None, str | None]:
-    times = [
-        str(stage["time"])
-        for stage in evidence.get("stages") or []
-        if isinstance(stage, dict) and stage.get("time")
-    ]
-    if record.get("timestamp"):
-        times.append(str(record["timestamp"]))
+    raw = [stage.get("time") for stage in evidence.get("stages") or [] if isinstance(stage, dict)]
+    raw.append(record.get("timestamp"))
+    times = [t for t in (_normalize_ts(value) for value in raw) if t]
     if not times:
         return None, None
-    # Engine timestamps are ISO-8601 UTC of one shape, so string order is time order.
     return min(times), max(times)
 
 
