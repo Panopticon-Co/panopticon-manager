@@ -30,8 +30,10 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     import manager.routers.commands as commands_module
     import manager.routers.enrollment as enrollment_module
     import manager.routers.health as health_module
+    import manager.routers.incidents as incidents_module
     import manager.routers.ingest as ingest_module
     import manager.routers.response_actions as response_actions_module
+    import manager.routers.status as status_module
 
     for mod in (
         health_module,
@@ -41,6 +43,8 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
         response_module,
         response_actions_module,
         alerts_module,
+        incidents_module,
+        status_module,
         factory_module,
         auth_module,
         migrations_module,

@@ -74,6 +74,8 @@ def _incident_alert(revision: int, stages: list[tuple[str | None, str, str]], ta
             "root_pid": 3000,
             "incident_score": 0.5 + 0.1 * revision,
             "causal_path": ["winword.exe", "powershell.exe"],
+            "score_breakdown": {"severity": 0.4, "breadth": 0.2},
+            "process_lineage": "powershell.exe <- winword.exe",
             "why": ["because"],
         },
     }
