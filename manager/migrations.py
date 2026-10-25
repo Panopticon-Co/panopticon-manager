@@ -234,6 +234,93 @@ def _migration_11(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX ix_enrollment_nonces_expires ON enrollment_nonces (expires_at)")
 
 
+def _migration_12(conn: sqlite3.Connection) -> None:
+    """Capstone incidents (panopticon-detection-engine
+    docs/integration/CONTRACT.md §5).
+
+    ``incidents`` holds one row per engine incident, keyed by the engine's
+    stable ``incident_id`` (an incident alert's ``alert_id`` changes with every
+    revision, ``INC-...-R<n>``; its ``incident_id`` does not). ``revision`` only
+    moves forward and ``status`` belongs to the analyst -- both enforced in
+    manager/detection/store.py, not by the schema. ``incident_json`` is the
+    latest incident alert's evidence (stages, causal_path, score_breakdown...).
+
+    ``incident_alerts`` links an incident to its revision alerts
+    (role='revision') and to the stage alerts its evidence names
+    (role='stage'). ``incident_audit`` records opened / revised / analyst
+    status changes.
+
+    ``alerts`` gains ``detection_source`` (rule|stateful|behavioral|
+    correlation -- the response policy reads it) and ``incident_id``, both
+    backfilled from ``alert_json`` for rows written before this migration.
+    """
+    conn.execute(
+        """
+        CREATE TABLE incidents (
+            incident_id     TEXT PRIMARY KEY,
+            host_id         TEXT,
+            agent_id        TEXT,
+            status          TEXT NOT NULL DEFAULT 'open',
+            severity        TEXT,
+            level           INTEGER,
+            score           REAL,
+            confidence      REAL,
+            tactics_json    TEXT NOT NULL DEFAULT '[]',
+            stage_count     INTEGER NOT NULL DEFAULT 0,
+            root_process    TEXT,
+            root_pid        INTEGER,
+            revision        INTEGER NOT NULL,
+            latest_alert_id TEXT NOT NULL,
+            first_seen      TEXT,
+            last_seen       TEXT,
+            incident_json   TEXT NOT NULL,
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX ix_incidents_status ON incidents (status, last_seen)")
+    conn.execute("CREATE INDEX ix_incidents_host ON incidents (host_id, last_seen)")
+    conn.execute(
+        """
+        CREATE TABLE incident_alerts (
+            incident_id TEXT NOT NULL,
+            alert_id    TEXT NOT NULL,
+            role        TEXT NOT NULL,
+            PRIMARY KEY (incident_id, alert_id),
+            FOREIGN KEY(incident_id) REFERENCES incidents(incident_id),
+            FOREIGN KEY(alert_id) REFERENCES alerts(alert_id)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX ix_incident_alerts_alert ON incident_alerts (alert_id)")
+    conn.execute(
+        """
+        CREATE TABLE incident_audit (
+            audit_id    TEXT PRIMARY KEY,
+            incident_id TEXT NOT NULL,
+            event       TEXT NOT NULL,
+            actor       TEXT NOT NULL,
+            detail      TEXT,
+            occurred_at TEXT NOT NULL,
+            FOREIGN KEY(incident_id) REFERENCES incidents(incident_id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX ix_incident_audit_incident ON incident_audit (incident_id, occurred_at)"
+    )
+    conn.execute("ALTER TABLE alerts ADD COLUMN detection_source TEXT")
+    conn.execute("ALTER TABLE alerts ADD COLUMN incident_id TEXT")
+    conn.execute("CREATE INDEX ix_alerts_incident ON alerts (incident_id)")
+    conn.execute(
+        "UPDATE alerts SET "
+        "detection_source = json_extract(alert_json, '$.detection_source'), "
+        "incident_id = json_extract(alert_json, '$.incident_id') "
+        "WHERE json_valid(alert_json)"
+    )
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -246,6 +333,7 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_9,
     _migration_10,
     _migration_11,
+    _migration_12,
 ]
 
 
