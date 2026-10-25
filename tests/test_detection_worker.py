@@ -323,3 +323,33 @@ def test_prune_still_runs_after_a_quiet_spell(tmp_path: Path) -> None:
     for _ in range(PRUNE_EVERY_IDLE_ROUNDS - 1):
         w.maybe_prune(ctx, 0)
     assert ctx.calls == 1
+
+
+def test_same_timestamp_events_are_processed_in_arrival_order(tmp_path: Path) -> None:
+    """An ETW process start and its Sysmon twin share a millisecond; the engine
+    needs them in the order the agent sent them, not in event_id order."""
+    db = tmp_path / "p.db"
+    _migrate(db)
+    conn = _open(db)
+    first, second = _evt_id("f"), _evt_id("0")  # second sorts first by id
+    _seed(conn, _raw_whoami(first, pid=10))
+    _seed(conn, _raw_whoami(second, pid=11))
+
+    w = _worker(tmp_path, db)
+    run, sink, writer, _context = build_detection_run(
+        conn, alerts_path=tmp_path / "alerts.ndjson", rules_dir=_DEFAULT_RULES_DIR
+    )
+    seen: list[str] = []
+    real = run.process_event
+
+    def recording(event):
+        seen.append(event["event_id"])
+        return real(event)
+
+    run.process_event = recording  # type: ignore[method-assign]
+    try:
+        w.run_once(conn, run, sink)
+    finally:
+        writer.close()
+    assert seen == [first, second]
+    conn.close()

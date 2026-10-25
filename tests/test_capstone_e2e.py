@@ -12,17 +12,21 @@ wire schema unchanged.
 
 None of the corpus events carries ``process.start_time_ticks`` (it is null),
 so every TERMINATE_PROCESS recommendation must fail closed. The KILL_PROCESS
-approval path is then exercised by replaying the same scenarios with
-``start_time_ticks`` set on each process block, as an agent that reports it
-would (the field is in the agent schema, ``nullableStartTimeTicks``). The
-values are fixed test inputs standing in for agent-reported tokens; the
-manager and engine only pass them through.
+approval path is then exercised by replaying the same scenarios the way the
+live agent reports a process creation: an ETW Kernel-Process twin (no command
+line, ``start_time_ticks`` = the creation time as a FILETIME, its own
+event id) just before each Sysmon process start. ``_with_etw_twins`` copies
+the engine's ``scripts/eval_demo_suite.py`` ``wire_lines(..., etw_twins=True)``;
+the manager and engine only pass the ticks through.
 """
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import importlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -57,16 +61,48 @@ def _host_of(scenario: str) -> str:
     return json.loads(_lines(scenario)[0])["host"]["id"]
 
 
-def _with_ticks(lines: list[str]) -> list[str]:
-    """Each process block carries a fixed, per-pid start_time_ticks."""
+_FILETIME_EPOCH = datetime(1601, 1, 1, tzinfo=timezone.utc)
+
+
+def _filetime(timestamp: str) -> int:
+    when = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    return int((when - _FILETIME_EPOCH).total_seconds() * 10_000_000)
+
+
+def _with_etw_twins(lines: list[str]) -> list[str]:
+    """Each Sysmon process start preceded by its ETW twin, as the agent sends it."""
     out = []
     for line in lines:
-        event = json.loads(line)
-        process = event["process"]
-        if process.get("start_time_ticks") is None:
-            process["start_time_ticks"] = 133_000_000_000_000_000 + process["pid"] * 1000
-        out.append(json.dumps(event, separators=(",", ":")))
+        raw = json.loads(line)
+        event, process = raw["event"], raw["process"]
+        if (
+            event["category"] == "process"
+            and event["type"] == "start"
+            and not process.get("start_time_ticks")
+        ):
+            twin = copy.deepcopy(raw)
+            twin["event"]["id"] = "evt_" + hashlib.sha256(
+                ("etw|" + event["id"]).encode()
+            ).hexdigest()
+            twin["source"] = {
+                "kind": "etw",
+                "provider": "Microsoft-Windows-Kernel-Process",
+                "channel": None,
+                "record_id": None,
+            }
+            twin["process"]["command_line"] = None
+            twin["process"]["start_time_ticks"] = _filetime(event["timestamp"])
+            out.append(json.dumps(twin))
+        out.append(line)
     return out
+
+
+def _start_ticks(scenario: str, pid: int) -> int:
+    for line in _lines(scenario):
+        raw = json.loads(line)
+        if raw["event"]["category"] == "process" and raw["process"]["pid"] == pid:
+            return _filetime(raw["event"]["timestamp"])
+    raise AssertionError(f"no process start for pid {pid}")
 
 
 class _Harness:
@@ -313,8 +349,8 @@ def test_kill_process_approval_path_without_stacking(harness: _Harness) -> None:
     office_host, download_host = _host_of(_OFFICE), _host_of(_DOWNLOAD)
     h.enroll("agent-alice", office_host)
     carol = h.enroll("agent-carol", download_host)
-    h.ingest("agent-alice", _with_ticks(_lines(_OFFICE)), "b-office-ticks")
-    h.ingest("agent-carol", _with_ticks(_lines(_DOWNLOAD)), "b-download-ticks")
+    h.ingest("agent-alice", _with_etw_twins(_lines(_OFFICE)), "b-office-etw")
+    h.ingest("agent-carol", _with_etw_twins(_lines(_DOWNLOAD)), "b-download-etw")
     h.drain()
 
     # Office chain: several rules and two incident revisions land on the same
@@ -353,7 +389,7 @@ def test_kill_process_approval_path_without_stacking(harness: _Harness) -> None:
     kill = kills_pending["DET-PROC-005"]
     assert kill["tier"] == "ANALYST_APPROVAL"
     target = json.loads(kill["target_json"])
-    assert target == {"pid": 5600, "start_time_ticks": 133_000_000_000_000_000 + 5600 * 1000}
+    assert target == {"pid": 5600, "start_time_ticks": _start_ticks(_DOWNLOAD, 5600)}
 
     incident_id = h.get(f"/api/v1/incidents?host_id={download_host}")["incidents"][0][
         "incident_id"
