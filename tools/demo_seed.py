@@ -147,7 +147,9 @@ def main(argv: list[str] | None = None) -> int:
                 "--file", str(_CORPUS / scenario / "events.ndjson"),
                 "--url", base,
                 "--agent-id", agent_id,
-                "--token", token,
+                # "=" form: a urlsafe token may start with "-", which argparse
+                # would otherwise read as an option.
+                f"--token={token}",
                 "--rebase-time",
                 "--etw-twins",
             ]

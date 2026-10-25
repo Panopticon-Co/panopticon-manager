@@ -125,7 +125,7 @@ def _batches(lines: list[str], size: int):
         yield lines[i : i + size]
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -140,7 +140,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--etw-twins", action="store_true", help="add the ETW twin of each Sysmon process start"
     )
-    args = ap.parse_args(argv)
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     lines = [
         ln

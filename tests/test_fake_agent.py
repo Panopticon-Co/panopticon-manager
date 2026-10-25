@@ -140,3 +140,14 @@ def test_etw_twins_carry_filetime_ticks_and_are_wire_valid() -> None:
         assert sysmon["event"]["id"] != twin["event"]["id"]
     # 1601-01-01 is tick zero; one second is 10^7 ticks.
     assert fake_agent.filetime("1601-01-01T00:00:01.000Z") == 10_000_000
+
+
+
+def test_token_starting_with_dash_parses_in_equals_form():
+    """Agent tokens are urlsafe base64 and can start with "-": argparse reads
+    `--token -x` as a missing value plus an option, so demo_seed passes
+    `--token=-x`. Seen live: the demo seed failed for one random token."""
+    parser = fake_agent.build_parser()
+    assert parser.parse_args(["--token=-abc123"]).token == "-abc123"
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--token", "-abc123"])
