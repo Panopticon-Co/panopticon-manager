@@ -427,6 +427,17 @@ def _migration_17(conn: sqlite3.Connection) -> None:
         index_record(conn, json.loads(row["raw_json"]))
 
 
+def _migration_18(conn: sqlite3.Connection) -> None:
+    """Immutable command result v2 receipts: one canonical body per result_id,
+    bound to agent and command with a SHA-256 digest (snapshot numbering: 16)."""
+    conn.execute("""
+        CREATE TABLE command_result_receipts (
+            result_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, command_id TEXT NOT NULL,
+            payload_digest TEXT NOT NULL, raw_json TEXT NOT NULL, received_at TEXT NOT NULL
+        )
+    """)
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -445,6 +456,7 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_15,
     _migration_16,
     _migration_17,
+    _migration_18,
 ]
 
 
