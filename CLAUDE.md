@@ -13,10 +13,12 @@ pinned git submodule at `vendor/eyedetect` and depends on it read-only. See
 `docs/adr/001-repo-topology.md` for why, and `docs/MANAGER_ARCHITECTURE.md`
 for the current package layout.
 
-As of Phase 0, this repo is a FastAPI skeleton: health/readiness/metrics
-endpoints and a migrations runner, nothing more. The ingest endpoint, auth,
-detection worker, and query API arrive in later phases — see
-`docs/ROADMAP.md` for the full sequence and what's actually implemented today.
+The manager is past its Phase 0 skeleton: authenticated ingest, agent and
+analyst enrollment, the detection worker, incident persistence, the response
+engine staging/approval path, the closed command queue, and the analyst query
+API all exist and are tested. The cross-repo capstone contract is
+`vendor/eyedetect/docs/integration/CONTRACT.md` (sections 5-7 are this repo's
+part). `docs/ROADMAP.md` predates much of this.
 
 ## Setup / Build
 
@@ -52,42 +54,55 @@ Config is environment-variable-backed (`manager/config.py`):
 
 ## Architecture
 
-- `manager/app.py` — FastAPI app factory + lifespan hook; runs migrations at
-  startup before accepting traffic.
+- `manager/app.py` — FastAPI app + lifespan: runs migrations, starts the one
+  detection worker thread, registers the routers.
 - `manager/db.py` — sqlite3 connection factory, one connection per thread,
-  WAL/NORMAL/busy_timeout/foreign_keys pragmas. No ORM — matches the style in
-  `vendor/eyedetect/src/reliability/spool.py`.
-- `manager/migrations.py` — numbered migration functions, modeled on that same
-  file's `_migration_1`/`_MIGRATIONS` pattern. Never edit an applied
-  migration; append a new one.
-- `manager/vendor_path.py` — `sys.path` shim so `from src.X import Y` resolves
-  into the vendored engine, matching its own internal import convention.
-- `manager/routers/health.py` — `/healthz` (liveness), `/readyz` (DB +
-  migration check), `/metrics` (reuses the vendored engine's
-  `Metrics.render_prometheus()` and `HealthState`, rather than reinventing
-  them).
-- `manager/detection/factory.py` — stub; will hold the `DetectionRun` wiring
-  duplicated from `vendor/eyedetect/src/main.py` starting Phase 3 (see
-  `docs/adr/001-repo-topology.md` for why it's duplicated, not upstreamed).
+  WAL/NORMAL/busy_timeout/foreign_keys pragmas. No ORM.
+- `manager/migrations.py` — numbered `_migration_N` functions (12 so far).
+  Never edit an applied migration; append a new one.
+- `manager/vendor_path.py` — `sys.path` shim so `panopticon_detection.*`
+  resolves into `vendor/eyedetect`.
+- `manager/wire/` — pydantic mirror of the agent's `event.schema.json`
+  (0.1–0.4, `extra="forbid"`) and the ingest response shape.
+- `manager/detection/worker.py` — the single detection thread (ADR 003):
+  claims `events` rows (`detect_state`), normalizes with the engine's
+  `OfficerIngestionAdapter`, runs `DetectionRun.process_event` inside one
+  `BEGIN IMMEDIATE` per event, prunes on load or idle.
+- `manager/detection/factory.py` — wraps the engine's own
+  `panopticon_detection.factory.build_detection_run`; `AlertSink.emit` stores
+  each alert, upserts incidents, appends `alerts.ndjson`, stages responses.
+- `manager/detection/store.py` — all detection writes: `alerts`, `incidents`
+  (revision only moves forward; analyst `status` never overwritten),
+  `incident_alerts`, `incident_audit`, analyst status changes.
+- `manager/detection/response.py` — recommendation → closed command
+  (`vendor/response_engine` translation + tiers), policy (behavioral
+  disruptive = record only; no duplicate open action per host+action+target),
+  15-min PENDING expiry, authorization via `routers/commands.py`.
+- `manager/routers/` — `ingest`, `enrollment`, `commands` (agent poll/accept/
+  result), `response_actions` (analyst authorize/reject), `alerts`,
+  `incidents`, `status`, `health`. Analyst routes use
+  `auth.require_analyst_token`.
 
-One SQLite file (`panopticon.db`), one `uvicorn` worker, sync handlers — see
-`docs/adr/003-process-model.md` for why (the vendored engine's `DetectionRun`
-holds in-process mutable correlation state that must never be touched from
-more than one worker/thread).
+One SQLite file, one `uvicorn` worker, one detection thread — see
+`docs/adr/003-process-model.md` (the engine's `DetectionRun` holds in-process
+state that must never be touched from more than one thread). Demo:
+`docs/DEMO.md` "Capstone demo (current)"; end-to-end test:
+`tests/test_capstone_e2e.py`.
 
 ## Changing the wire protocol or the vendored engine's API
 
-The manager's ingest endpoint (Phase 1+) is a cross-repo API boundary with
+The manager's ingest endpoint is a cross-repo API boundary with
 `panopticon-agent`'s `schema/event.schema.json` — see
 `docs/adr/002-wire-protocol-ack-semantics.md`. Bumping `vendor/eyedetect` to a
 new commit is a normal submodule update, but check
-`manager/detection/factory.py` and anything importing `src.*` first, since
+`manager/detection/factory.py` and anything importing `panopticon_detection.*` first, since
 those are the only places this repo's code depends on the vendored package's
 internal shape.
 
 ## Remediation stays simulated
 
-The vendored engine's `EndpointRemediationEngine` records `RemediationAction`
-dataclasses only — no real `subprocess`/`os.kill`/`winreg`/socket call
-anywhere. This applies to the manager too: do not wire any remediation action
-to a real system call until a roadmap phase explicitly calls for it.
+Neither the engine nor the manager executes a response: the engine emits a
+recommendation, the manager stages it as a closed-vocabulary command, and only
+an agent acts on it. No `subprocess`/`os.kill`/`winreg`/socket call to act on a
+host belongs anywhere in this repo. `start_time_ticks` is an opaque
+pass-through token — never derive or default it; missing means fail closed.

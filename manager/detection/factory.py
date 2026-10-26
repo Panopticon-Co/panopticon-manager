@@ -11,9 +11,11 @@ engine now owns its own composition in
 what is genuinely manager-specific -- where alerts go.
 
 ``AlertSink`` is that piece: DetectionRun calls ``emit`` for every alert, and
-here ``emit`` does exactly three things -- INSERT the alert row, append it to
-``alerts.ndjson`` (the file the console reads), and create at most one
-``response_actions`` row. The engine's ``Alert`` carries no ``agent_id``, so the
+here ``emit`` does exactly four things -- INSERT the alert row, fold an
+incident alert (``incident_id`` set) into ``incidents``/``incident_alerts``,
+append the alert to ``alerts.ndjson`` (the file the console reads), and create
+at most one ``response_actions`` row. All of it runs inside the worker's
+per-event ``BEGIN IMMEDIATE``. The engine's ``Alert`` carries no ``agent_id``, so the
 worker binds the current event's agent id onto the sink before each
 ``process_event`` call.
 """
@@ -27,7 +29,7 @@ from typing import Any
 
 import manager.vendor_path  # noqa: F401  (sys.path side effect, must precede engine imports)
 from manager.detection import response
-from manager.detection.store import insert_alert
+from manager.detection.store import insert_alert, upsert_incident
 from panopticon_detection.factory import DetectionContext
 from panopticon_detection.factory import build_detection_run as build_engine_run
 from panopticon_detection.reliability.alert_sink import IncrementalAlertWriter
@@ -50,6 +52,10 @@ class AlertSink:
 
     def emit(self, alert: Any) -> None:
         inserted = insert_alert(self._conn, alert, agent_id=self.agent_id)
+        # Always folded, not only on a fresh insert: upsert_incident is itself
+        # idempotent (revision only moves forward, links are INSERT OR
+        # IGNORE), so a replay converges instead of being skipped.
+        upsert_incident(self._conn, alert, agent_id=self.agent_id)
         self._writer.write(alert)
         if inserted:
             # Only for a genuinely new alert row -- a replayed/crash-recovered

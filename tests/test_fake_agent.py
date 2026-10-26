@@ -93,3 +93,61 @@ def test_replay_produces_gate_a_and_b_alerts(
             time.sleep(0.1)
 
     assert {"DET-PROC-008", "DET-PROC-003", "DET-NET-006", "PROV-CAMPAIGN"} <= got
+
+
+def test_rebase_time_moves_newest_event_to_now_and_keeps_gaps() -> None:
+    from datetime import datetime, timezone
+
+    lines = [
+        ln
+        for ln in (_TOOLS / "demo_events.ndjson").read_text().splitlines()
+        if ln.strip() and not ln.startswith("#")
+    ]
+    now = datetime(2026, 10, 25, 9, 30, 0, 123456, tzinfo=timezone.utc)
+    prepared = fake_agent.prepare(lines, rebase=True, twins=False, now=now)
+    rebased = [json.loads(ln) for ln in prepared]
+    original = [json.loads(ln) for ln in lines]
+    stamps = [fake_agent._parse_ts(e["event"]["timestamp"]) for e in rebased]
+    assert max(stamps) == now.replace(microsecond=123000)
+    before = [fake_agent._parse_ts(e["event"]["timestamp"]) for e in original]
+    assert [b - before[0] for b in before] == [s - stamps[0] for s in stamps]
+    # Nothing but the timestamp changes.
+    for old, new in zip(original, rebased):
+        old["event"].pop("timestamp")
+        new["event"].pop("timestamp")
+        assert old == new
+
+
+def test_etw_twins_carry_filetime_ticks_and_are_wire_valid() -> None:
+    from manager.wire.telemetry import TelemetryEvent
+
+    corpus = _TOOLS.parent / "vendor" / "eyedetect" / "tests" / "corpus"
+    text = (corpus / "download_execute_lsass_dump" / "events.ndjson").read_text()
+    lines = [ln for ln in text.splitlines() if ln.strip() and not ln.startswith("#")]
+    out = [json.loads(ln) for ln in fake_agent.prepare(lines, rebase=True, twins=True)]
+    starts = [e for e in out if e["event"]["category"] == "process"]
+    twins = [e for e in starts if e["source"]["kind"] == "etw"]
+    assert len(twins) * 2 == len(starts)  # one twin per Sysmon start
+    for twin in twins:
+        TelemetryEvent.model_validate(twin)
+        assert twin["process"]["command_line"] is None
+        assert twin["process"]["start_time_ticks"] == fake_agent.filetime(
+            twin["event"]["timestamp"]
+        )
+        sysmon = out[out.index(twin) + 1]  # the twin comes first, as the agent sends it
+        assert sysmon["process"]["pid"] == twin["process"]["pid"]
+        assert sysmon["event"]["timestamp"] == twin["event"]["timestamp"]
+        assert sysmon["event"]["id"] != twin["event"]["id"]
+    # 1601-01-01 is tick zero; one second is 10^7 ticks.
+    assert fake_agent.filetime("1601-01-01T00:00:01.000Z") == 10_000_000
+
+
+
+def test_token_starting_with_dash_parses_in_equals_form():
+    """Agent tokens are urlsafe base64 and can start with "-": argparse reads
+    `--token -x` as a missing value plus an option, so demo_seed passes
+    `--token=-x`. Seen live: the demo seed failed for one random token."""
+    parser = fake_agent.build_parser()
+    assert parser.parse_args(["--token=-abc123"]).token == "-abc123"
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--token", "-abc123"])

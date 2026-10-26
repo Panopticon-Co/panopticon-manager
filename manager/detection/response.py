@@ -36,6 +36,7 @@ __all__ = [
     "authorize_response_action",
     "classify_tier",
     "expire_stale_response_actions",
+    "find_open_duplicate",
     "on_alert_created",
     "reject_response_action",
     "translate_recommendation",
@@ -101,7 +102,100 @@ def on_alert_created(conn: sqlite3.Connection, alert: Any) -> None:
         )
 
 
+# detection_source values whose disruptive recommendations are never staged
+# for approval (CONTRACT.md §6, class 3). Behavioral detectors -- beaconing,
+# rarity -- are evidence, not a verdict: an analyst may still act on them, but
+# by hand, never by approving a command the detector itself proposed.
+_RECORD_ONLY_SOURCES = frozenset({"behavioral"})
+
+# Actions that need a PID-reuse guard. Without target_start_time_ticks the
+# translation fails closed; the reason says so instead of "no mapping".
+_PROCESS_TARGETED = frozenset({"TERMINATE_PROCESS", "COLLECT_PROCESS_INFO"})
+
+# A response action is "open" -- and blocks a duplicate -- while it is
+# PENDING (inside its authorization window) or AUTHORIZED with a command that
+# has not yet reached a terminal state.
+_OPEN_COMMAND_STATES = ("PENDING", "AUTHORIZED", "DISPATCHED", "ACCEPTED")
+
+
+def _insert_response_action(
+    conn: sqlite3.Connection,
+    *,
+    alert_id: str,
+    action: str,
+    tier: str,
+    state: str,
+    target: dict,
+    reason: str | None,
+) -> str:
+    response_id = str(uuid4())
+    conn.execute(
+        "INSERT INTO response_actions (response_id, alert_id, action, tier, lifecycle_state, "
+        "target_json, command_id, created_at, authorized_at, authorized_by, decided_reason) "
+        "VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?)",
+        (response_id, alert_id, action, tier, state, json.dumps(target), iso_now(), reason),
+    )
+    return response_id
+
+
+def _untranslatable_reason(eyedetect_action: str, active_response: dict) -> str:
+    if eyedetect_action in _PROCESS_TARGETED:
+        ticks = active_response.get("target_start_time_ticks")
+        if not isinstance(ticks, int) or isinstance(ticks, bool) or ticks <= 0:
+            return (
+                f"fail closed: {eyedetect_action} recommendation carries no "
+                "target_start_time_ticks, so the target process cannot be "
+                "guarded against PID reuse"
+            )
+    return f"no safe command mapping for {eyedetect_action}"
+
+
+def find_open_duplicate(
+    conn: sqlite3.Connection, host_id: str | None, action: str, target: dict
+) -> str | None:
+    """The response_id of an open response action for the same host, action and
+    target, or None. "Open" means PENDING and not yet past its authorization
+    window, or AUTHORIZED with a command still PENDING/AUTHORIZED/DISPATCHED/
+    ACCEPTED. The target compares as parsed JSON: (pid, start_time_ticks) for
+    process actions, path for QUARANTINE_FILE, {} for host-wide actions."""
+    if host_id is None:
+        return None
+    cutoff = (datetime.now(timezone.utc) - _RESPONSE_ACTION_TTL).isoformat()
+    placeholders = ", ".join("?" for _ in _OPEN_COMMAND_STATES)
+    rows = conn.execute(
+        "SELECT ra.response_id, ra.target_json FROM response_actions ra "
+        "JOIN alerts a ON a.alert_id = ra.alert_id "
+        "LEFT JOIN commands c ON c.command_id = ra.command_id "
+        "WHERE a.host_id = ? AND ra.action = ? AND ("
+        "  (ra.lifecycle_state = 'PENDING' AND ra.created_at > ?) OR "
+        f"  (ra.lifecycle_state = 'AUTHORIZED' AND c.lifecycle_state IN ({placeholders}))"
+        ") ORDER BY ra.created_at, ra.response_id",
+        (host_id, action, cutoff, *_OPEN_COMMAND_STATES),
+    ).fetchall()
+    for row in rows:
+        try:
+            if json.loads(row["target_json"]) == target:
+                return str(row["response_id"])
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def _on_alert_created(conn: sqlite3.Connection, alert: Any) -> None:
+    """Policy, in order (CONTRACT.md §6):
+
+    1. No recommendation -> nothing staged.
+    2. Untranslatable (unknown action, missing start_time_ticks, ...) ->
+       REJECTED, reason recorded.
+    3. Disruptive (tier != AUTO_SAFE) from a ``behavioral`` alert -> REJECTED.
+    4. An open action already exists for the same host + action + target ->
+       REJECTED ``duplicate of <response_id>``. A row is still written, so
+       every alert that recommended something shows what became of it, but it
+       is terminal and produces no command: incident revisions and repeat
+       detections never stack a second KILL_PROCESS on one process.
+    5. Otherwise PENDING; AUTO_SAFE is authorized immediately as
+       ``system:response-engine``.
+    """
     record = alert.to_dict() if hasattr(alert, "to_dict") else alert
     active_response = record.get("active_response")
     if not active_response:
@@ -109,40 +203,61 @@ def _on_alert_created(conn: sqlite3.Connection, alert: Any) -> None:
     eyedetect_action = active_response.get("action")
     if not eyedetect_action:
         return
+    alert_id = record["alert_id"]
     mapped = translate_recommendation(eyedetect_action, active_response)
-    response_id = str(uuid4())
-    now = iso_now()
     if mapped is None:
-        conn.execute(
-            "INSERT INTO response_actions (response_id, alert_id, action, tier, lifecycle_state, "
-            "target_json, command_id, created_at, authorized_at, authorized_by, decided_reason) "
-            "VALUES (?, ?, ?, ?, 'REJECTED', ?, NULL, ?, NULL, NULL, ?)",
-            (
-                response_id,
-                record["alert_id"],
-                eyedetect_action,
-                "AUTO_SAFE",
-                json.dumps(active_response),
-                now,
-                f"no safe command mapping for {eyedetect_action}",
-            ),
+        _insert_response_action(
+            conn,
+            alert_id=alert_id,
+            action=eyedetect_action,
+            tier="AUTO_SAFE",
+            state="REJECTED",
+            target=active_response,
+            reason=_untranslatable_reason(eyedetect_action, active_response),
         )
         return
     command_action, command_target, decided_reason = mapped
     tier = classify_tier(command_action)
-    conn.execute(
-        "INSERT INTO response_actions (response_id, alert_id, action, tier, lifecycle_state, "
-        "target_json, command_id, created_at, authorized_at, authorized_by, decided_reason) "
-        "VALUES (?, ?, ?, ?, 'PENDING', ?, NULL, ?, NULL, NULL, ?)",
-        (
-            response_id,
-            record["alert_id"],
-            command_action,
-            tier,
-            json.dumps(command_target),
-            now,
-            decided_reason,
-        ),
+
+    source = record.get("detection_source")
+    if tier != "AUTO_SAFE" and source in _RECORD_ONLY_SOURCES:
+        _insert_response_action(
+            conn,
+            alert_id=alert_id,
+            action=command_action,
+            tier=tier,
+            state="REJECTED",
+            target=command_target,
+            reason=(
+                f"record only: {command_action} is disruptive and this is a {source} "
+                "detection (evidence, not a verdict); it needs a rule, stateful or "
+                "correlation detection to be proposed for approval"
+            ),
+        )
+        return
+
+    host_id = record.get("host_id") or active_response.get("host_id")
+    duplicate_of = find_open_duplicate(conn, host_id, command_action, command_target)
+    if duplicate_of is not None:
+        _insert_response_action(
+            conn,
+            alert_id=alert_id,
+            action=command_action,
+            tier=tier,
+            state="REJECTED",
+            target=command_target,
+            reason=f"duplicate of {duplicate_of}",
+        )
+        return
+
+    response_id = _insert_response_action(
+        conn,
+        alert_id=alert_id,
+        action=command_action,
+        tier=tier,
+        state="PENDING",
+        target=command_target,
+        reason=decided_reason,
     )
     if tier == "AUTO_SAFE":
         try:

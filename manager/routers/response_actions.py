@@ -12,6 +12,8 @@ per-caller actor for these decisions.
 from __future__ import annotations
 
 import json
+import sqlite3
+from typing import Literal
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -63,10 +65,67 @@ _SELECT_PENDING = (
 )
 
 
+ResponseActionState = Literal["PENDING", "AUTHORIZED", "REJECTED", "EXPIRED"]
+
+_SELECT = (
+    f"SELECT {', '.join('ra.' + c for c in _COLUMNS)}, "
+    "c.lifecycle_state AS command_lifecycle_state "
+    "FROM response_actions ra LEFT JOIN commands c ON c.command_id = ra.command_id"
+)
+
+
 def _row_to_dict(row) -> dict:
     record = {key: row[key] for key in _COLUMNS}
     record["target"] = json.loads(record.pop("target_json"))
     return record
+
+
+def _with_command_audit(conn: sqlite3.Connection, rows) -> list[dict]:
+    """Serialize response_actions rows (selected with ``_SELECT``), adding the
+    linked command's ``command_lifecycle_state`` and its ``command_audit``
+    rows as ``audit`` (empty for an action that never produced a command)."""
+    out = []
+    for row in rows:
+        record = _row_to_dict(row)
+        record["command_lifecycle_state"] = row["command_lifecycle_state"]
+        record["audit"] = []
+        if row["command_id"] is not None:
+            record["audit"] = [
+                dict(a)
+                for a in conn.execute(
+                    "SELECT audit_id, event, actor, detail, occurred_at FROM command_audit "
+                    "WHERE command_id = ? ORDER BY occurred_at, rowid",
+                    (row["command_id"],),
+                ).fetchall()
+            ]
+        out.append(record)
+    return out
+
+
+def expire_pending(conn: sqlite3.Connection) -> None:
+    """Run the lazy PENDING -> EXPIRED sweep in its own short transaction, so
+    every read shows current lifecycle states."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        expire_stale_response_actions(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def response_actions_for_alerts(conn: sqlite3.Connection, alert_ids: list[str]) -> list[dict]:
+    """Response actions (with command lifecycle and audit) for these alerts,
+    oldest first. Used by the alert and incident detail routes."""
+    if not alert_ids:
+        return []
+    expire_pending(conn)
+    placeholders = ", ".join("?" for _ in alert_ids)
+    rows = conn.execute(
+        f"{_SELECT} WHERE ra.alert_id IN ({placeholders}) ORDER BY ra.created_at, ra.response_id",
+        tuple(alert_ids),
+    ).fetchall()
+    return _with_command_audit(conn, rows)
 
 
 @router.post("/api/v1/analysts/enroll", response_model=AnalystEnrollmentResponse)
@@ -80,28 +139,19 @@ async def enroll(
 @router.get("/api/v1/response-actions")
 async def list_response_actions(
     authorization: str | None = Header(default=None),
-    state: str | None = None,
+    state: ResponseActionState | None = None,
 ) -> dict:
     require_analyst_token(authorization)
     conn = db.connect()
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        expire_stale_response_actions(conn)
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
+    expire_pending(conn)
     if state is not None:
         rows = conn.execute(
-            f"SELECT {', '.join(_COLUMNS)} FROM response_actions "
-            "WHERE lifecycle_state = ? ORDER BY created_at DESC LIMIT 200",
+            f"{_SELECT} WHERE ra.lifecycle_state = ? ORDER BY ra.created_at DESC LIMIT 200",
             (state,),
         ).fetchall()
     else:
-        rows = conn.execute(
-            f"SELECT {', '.join(_COLUMNS)} FROM response_actions ORDER BY created_at DESC LIMIT 200"
-        ).fetchall()
-    return {"response_actions": [_row_to_dict(row) for row in rows]}
+        rows = conn.execute(f"{_SELECT} ORDER BY ra.created_at DESC LIMIT 200").fetchall()
+    return {"response_actions": _with_command_audit(conn, rows)}
 
 
 @router.post("/api/v1/response-actions/{response_id}/authorize")

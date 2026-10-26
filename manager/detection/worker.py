@@ -115,7 +115,13 @@ class DetectionWorker:
             rows = conn.execute(
                 "SELECT event_id, agent_id, raw_json FROM events "
                 "WHERE detect_state='pending' "
-                "ORDER BY event_timestamp, event_id LIMIT ?",
+                # Ties on event time keep arrival order (rowid), not event_id
+                # order: the agent reports a process creation via ETW (with
+                # start_time_ticks) just before Sysmon (with the command line),
+                # often in the same millisecond, and the engine attaches the
+                # ETW twin's ticks to the Sysmon detection only if it saw the
+                # twin first. An event_id tie-break is a hash -- arbitrary.
+                "ORDER BY event_timestamp, rowid LIMIT ?",
                 (CLAIM_LIMIT,),
             ).fetchall()
             if rows:
