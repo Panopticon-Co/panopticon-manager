@@ -1,5 +1,18 @@
 # Wave 6 integration verification — 2026-10-27
 
+## Deployment upgrade from the existing lab
+
+The deployed lab database uses a pre-feature migration number 13, with
+`endpoint_records.received_at/raw_sha256/schema_version` and no incident tables.
+That is a different layout from main's migration 13. Startup now recognizes only
+that exact layout, installs the missing incident/current endpoint tables, and
+renames the historical table to `endpoint_records_legacy_v13` atomically. Historical
+bodies stay in place without duplication or detection replay. Enrollment, commands,
+results and legacy Linux events retain their original tables. New canonical
+records use `endpoint_records`. Unknown partial layouts fail without modification.
+Regression tests cover preservation of the original table root page, bodies and
+enrollment state, idempotency and refusal of an unknown layout.
+
 ## Audit before changes
 
 The workspace root is an uncommitted container repository. Actual checkouts are

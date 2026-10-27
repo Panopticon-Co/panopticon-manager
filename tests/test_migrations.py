@@ -1,7 +1,60 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from manager import migrations
+
+
+def _lab_v13_database(tmp_path, monkeypatch):
+    conn = _connect(tmp_path / "lab-v13.db")
+    with monkeypatch.context() as scoped:
+        scoped.setattr(migrations, "_MIGRATIONS", migrations._MIGRATIONS[:11])
+        migrations.migrate(conn)
+    conn.execute("INSERT INTO schema_migrations VALUES (12,'legacy'),(13,'legacy')")
+    conn.execute("""CREATE TABLE endpoint_records (
+        record_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, host_id TEXT NOT NULL,
+        kind TEXT NOT NULL, category TEXT NOT NULL, observed_at TEXT NOT NULL,
+        received_at TEXT NOT NULL, schema_version TEXT NOT NULL,
+        raw_sha256 TEXT NOT NULL, raw_json TEXT NOT NULL
+    )""")
+    conn.execute("CREATE INDEX ix_endpoint_records_host ON endpoint_records(host_id)")
+    conn.execute("INSERT INTO endpoint_records VALUES "
+                 "('rec-old','agent-old','host-old','health','endpoint_health',"
+                 "'t0','t1','1.0','digest-old','{\"retained\":true}')")
+    conn.execute("INSERT INTO enrolled_agents "
+                 "(agent_id,host_id,token_digest,enrolled_at) VALUES "
+                 "('agent-old','host-old','token-digest','t0')")
+    conn.commit()
+    return conn
+
+
+def test_deployed_lab_v13_upgrades_without_copying_or_losing_history(tmp_path, monkeypatch):
+    conn = _lab_v13_database(tmp_path, monkeypatch)
+    original = tuple(conn.execute("SELECT * FROM endpoint_records").fetchone())
+    original_root = conn.execute(
+        "SELECT rootpage FROM sqlite_master WHERE name='endpoint_records'"
+    ).fetchone()[0]
+    assert migrations.migrate(conn) == 18
+    assert tuple(conn.execute("SELECT * FROM endpoint_records_legacy_v13").fetchone()) == original
+    assert conn.execute(
+        "SELECT rootpage FROM sqlite_master WHERE name='endpoint_records_legacy_v13'"
+    ).fetchone()[0] == original_root
+    assert conn.execute("SELECT COUNT(*) FROM endpoint_records").fetchone()[0] == 0
+    assert conn.execute("SELECT token_digest FROM enrolled_agents").fetchone()[0] == "token-digest"
+    assert conn.execute("SELECT COUNT(*) FROM incidents").fetchone()[0] == 0
+    assert migrations.migrate(conn) == 18
+
+
+def test_unknown_lab_layout_refuses_upgrade_atomically(tmp_path, monkeypatch):
+    conn = _lab_v13_database(tmp_path, monkeypatch)
+    conn.execute("ALTER TABLE endpoint_records ADD COLUMN unexpected TEXT")
+    conn.commit()
+    with pytest.raises(RuntimeError, match="unrecognized lab v13 layout"):
+        migrations.migrate(conn)
+    assert migrations.current_version(conn) == 13
+    assert conn.execute("SELECT COUNT(*) FROM endpoint_records").fetchone()[0] == 1
+    assert conn.execute("SELECT name FROM sqlite_master WHERE name='incidents'").fetchone() is None
 
 
 def _connect(path: Path) -> sqlite3.Connection:

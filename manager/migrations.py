@@ -470,6 +470,50 @@ def current_version(conn: sqlite3.Connection) -> int:
     return int(row["v"])
 
 
+def _upgrade_lab_v13_layout(conn: sqlite3.Connection) -> None:
+    """Bridge the deployed, pre-feature lab schema numbered 13.
+
+    That lab revision predates main's incident migration and uses a different
+    endpoint table. Archive it by rename: large historical bodies remain intact
+    without copying or replaying them into the current detection queue. Existing
+    enrolled agents, legacy events, commands and results remain in their tables.
+    The exact signature prevents guessing how to repair an unrelated database.
+    """
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(endpoint_records)")}
+    if "received_at" not in columns and "raw_sha256" not in columns:
+        return
+    expected = {
+        "record_id", "agent_id", "host_id", "kind", "category", "observed_at",
+        "received_at", "schema_version", "raw_sha256", "raw_json",
+    }
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    alert_columns = {row["name"] for row in conn.execute("PRAGMA table_info(alerts)")}
+    if columns != expected or tables & {
+        "endpoint_records_legacy_v13", "endpoint_latest", "incidents",
+    } or alert_columns & {"detection_source", "incident_id"}:
+        raise RuntimeError("unrecognized lab v13 layout; database left unchanged")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        _migration_12(conn)
+        conn.execute("ALTER TABLE endpoint_records RENAME TO endpoint_records_legacy_v13")
+        # The old lab used this name for a different column layout.
+        old_index = conn.execute(
+            "SELECT tbl_name FROM sqlite_master WHERE type='index' "
+            "AND name='ix_endpoint_records_host'"
+        ).fetchone()
+        if old_index is not None:
+            conn.execute("DROP INDEX ix_endpoint_records_host")
+            conn.execute(
+                "CREATE INDEX ix_endpoint_legacy_v13_host "
+                "ON endpoint_records_legacy_v13(host_id,kind,category,observed_at)"
+            )
+        _migration_13(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def migrate(conn: sqlite3.Connection) -> int:
     """Apply any pending migrations in order. Returns the resulting version."""
     version = current_version(conn)
@@ -478,6 +522,8 @@ def migrate(conn: sqlite3.Connection) -> int:
             f"database is at schema version {version}, newer than the "
             f"{len(_MIGRATIONS)} migrations this build knows about"
         )
+    if version == 13:
+        _upgrade_lab_v13_layout(conn)
     for i in range(version, len(_MIGRATIONS)):
         conn.execute("BEGIN IMMEDIATE")
         try:
