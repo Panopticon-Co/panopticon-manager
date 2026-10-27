@@ -1,5 +1,35 @@
 # Wave 6 integration verification — 2026-10-27
 
+## Current separate-VM checkpoint (acceptance still pending)
+
+The regular service on PANO-NEW-MGR (`10.77.10.10`) now runs application revision
+`9e9df440a3ec3cdf0209721bbfa7533dcad0d57f` behind its original nginx HTTPS listener.
+Readiness reports schema 18. A new 8-GiB data disk supplies the active DB at
+`/srv/panopticon-data/manager/panopticon.db`; enrollment/command state was copied
+and verified before upgrade. The full original database remains unchanged at
+`/var/lib/panopticon-manager/panopticon.db` as the historical archive. Active
+counts exclude archived telemetry. All three prior enrollments were preserved.
+The old source checkout and private deployment configuration were backed up.
+
+The root filesystem had filled. VMware's resize required more host scratch space
+than available; no resize completed. The powered-off original VMDK was compressed
+at the host filesystem level without deleting guest files. An additional data
+disk was used instead. Manager's systemd override requires that mount and retains
+the original private credential file. Root free space remains low because it
+contains the preserved historical DB; capacity/retention work remains separate
+from this transport acceptance task. Linux endpoint VMs were not reconfigured.
+
+Fresh local verification: 285 Manager tests passed with native producer tools and
+no skips; full Ruff check passed. Agent CTest passed 48/48. The earlier loopback
+runtime evidence remains valid for its stated scope. An existing Officer is
+uploading successfully to the upgraded remote service.
+
+**The PANO-NEW-WIN-01 cross-VM run is blocked at BitLocker recovery**, after a
+firmware-policy change. Its four commented encryption entries have been restored.
+The operator must unlock Windows before VMnet10, verified TLS/enrollment, live
+file/process/system ingestion and the remote native command/result round trip can
+be accepted. PRs remain drafts and this checkpoint is not readiness to merge.
+
 ## Deployment upgrade from the existing lab
 
 The deployed lab database uses a pre-feature migration number 13, with
