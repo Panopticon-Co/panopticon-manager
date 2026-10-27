@@ -1,6 +1,44 @@
 # Wave 6 integration verification — 2026-10-27
 
-## Current separate-VM checkpoint (acceptance still pending)
+## Cross-VM E2E Verified
+
+The remaining acceptance scenario passed from PANO-NEW-WIN-01 (`10.77.10.31`)
+to this regular PANO-NEW-MGR service (`10.77.10.10:443`) over VMnet10, from
+21:57:39 to 22:00:04 IST, 27 October 2026. The native Windows agent self-enrolled
+over verified TLS; no temporary Windows-local Manager was involved. The guest
+TLS probe negotiated TLS 1.3 and recorded the separate local/peer addresses.
+
+The test checkpoint held 3,577 records. Independent readback after clean shutdown
+found **4,059 canonical records**: 3,429 observations, 418 state, 91 health, 62 gap
+and 59 evidence records, with 4,059 persisted capture-age entries. Observations
+include 10 process, 289 live Sysmon file and 4 network records. System-state and
+file samples were read back directly from the deployed database.
+
+The Manager-held native-exact record for owned ping.exe PID 10220 supplied the
+boot identity and creation ticks `134375921207039503` for
+`cross-vm-kill-4ba6219b7f50`. Dispatch, accept and native termination completed;
+Manager retained a schema-2 SUCCEEDED result with completion observed. Its actual
+body validates against contracts, and its immutable digest matches independent
+database readback. The target exited before cleanup and agent shutdown returned 0.
+The run observed no HTTP 422. One initial challenge/upload pair received 401 during
+enrollment; native retries recovered, followed by 167 successful challenge/upload
+pairs. Bootstrap credential copies were removed; the guest's protected identity,
+spool and remote configuration remain for reproducible use.
+
+Evidence lives in the coordinated agent PR:
+`docs/windows-endpoint/evidence/20261027-cross-vm/`, including `summary.json`,
+`persisted-samples.json`, `network-link.json` and `SHA256SUMS.json`.
+Deployed application revision: `9e9df440a3ec3cdf0209721bbfa7533dcad0d57f`.
+Local checks passed: 285 Manager tests with native tools/no skips, full Ruff,
+48/48 agent CTest, 139 Response Engine tests and contract fixture/scanner checks.
+
+This closes the stated Wave 6 cross-VM transport acceptance using existing live
+sources. The optional FIM marker was not observed; file proof uses live Sysmon.
+Minifilter/API-hook/kernel-network producer qualification, loss-free collection,
+capacity/retention and fleet/soak behavior remain separate work. Merging the
+coordinated PRs remains an operator action.
+
+## Historical deployment checkpoint before Windows unlock
 
 The regular service on PANO-NEW-MGR (`10.77.10.10`) now runs application revision
 `9e9df440a3ec3cdf0209721bbfa7533dcad0d57f` behind its original nginx HTTPS listener.
