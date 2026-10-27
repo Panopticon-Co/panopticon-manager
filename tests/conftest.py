@@ -99,3 +99,13 @@ def enroll_test_agent(
         },
         headers={"X-Panopticon-Enrollment-Token": token},
     )
+
+
+def officer_artifact(name: str):
+    """A native Officer test executable from the sibling panopticon-agent build.
+    OFFICER_BUILD_DIR overrides the default build-verify-x64 directory."""
+    import os
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2] / "panopticon-agent/build-verify-x64"
+    return Path(os.environ.get("OFFICER_BUILD_DIR", str(root))) / name

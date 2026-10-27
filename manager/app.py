@@ -17,6 +17,7 @@ from manager.detection.worker import DetectionWorker
 from manager.routers import (
     alerts,
     commands,
+    endpoint,
     enrollment,
     health,
     incidents,
@@ -48,6 +49,7 @@ async def _lifespan(app: FastAPI):
 app = FastAPI(title="Panopticon Manager", lifespan=_lifespan)
 app.include_router(health.router)
 app.include_router(ingest.router)
+app.include_router(endpoint.router)
 app.include_router(enrollment.router)
 app.include_router(commands.router)
 app.include_router(response_actions.router)
