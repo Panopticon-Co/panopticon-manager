@@ -1,0 +1,69 @@
+{
+  "schema_version": "1.0",
+  "record_type": "state",
+  "id": "50ee8325b9027577bb5dafb1f613c0a5",
+  "seq": 4,
+  "type": "state.host",
+  "time": "2026-10-06T03:23:02.200364796Z",
+  "observed_time": "2026-10-06T03:23:02.200364796Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "none"
+  },
+  "provenance": {
+    "provider": "inventory",
+    "mechanism": "PROCFS+SYSFS+ETC",
+    "confidence": "observed"
+  },
+  "state": {
+    "object": "host",
+    "snapshot_id": "sensor-0104a7120230-host-2",
+    "part": 1,
+    "parts": 1,
+    "items": [
+      {
+        "hostname": "ubuntu2204.localdomain",
+        "os": {
+          "id": "ubuntu",
+          "id_like": "debian",
+          "name": "Ubuntu",
+          "pretty_name": "Ubuntu 22.04.3 LTS",
+          "version_id": "22.04",
+          "version_codename": "jammy"
+        },
+        "kernel": {
+          "release": "5.15.0-91-generic",
+          "version": "#101-Ubuntu SMP Tue Nov 14 13:30:08 UTC 2023",
+          "cmdline": "BOOT_IMAGE=/vmlinuz-5.15.0-91-generic root=/dev/mapper/ubuntu--vg-ubuntu--lv ro lsm=lockdown,capability,landlock,yama,apparmor,bpf net.ifnames=0 biosdevname=0",
+          "tainted": {
+            "value": 0,
+            "flags": []
+          }
+        },
+        "boot": {
+          "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+          "boot_time_unix": 1791228966,
+          "uptime_seconds": 28015
+        },
+        "hardware": {
+          "cpu_count": 6,
+          "cpu_model": "13th Gen Intel(R) Core(TM) i7-13700HX",
+          "memory_total_kb": 4004968,
+          "virtualization": {
+            "hypervisor": true,
+            "sys_vendor": "innotek GmbH",
+            "product_name": "VirtualBox"
+          }
+        },
+        "machine_id_sha256": "184779a3880329506a351a9516dd06e9"
+      }
+    ]
+  },
+  "unavailable": []
+}

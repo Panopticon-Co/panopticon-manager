@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "record_type": "event",
+  "id": "74036cb442702bd0971b1f205401d10f",
+  "seq": 42,
+  "type": "hash.computed",
+  "time": "2026-10-06T03:23:04.532869523Z",
+  "observed_time": "2026-10-06T03:23:04.532869523Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "none"
+  },
+  "provenance": {
+    "provider": "hash",
+    "mechanism": "FSSCAN",
+    "confidence": "observed"
+  },
+  "process": {
+    "entity_id": "738a98bb9fc43ff222a33fd942508d91",
+    "exec_gen": 1,
+    "pid": 171975
+  },
+  "executable": {
+    "path": "/usr/bin/sudo",
+    "dev": 64768,
+    "inode": 918600,
+    "size": 232416,
+    "hash": {
+      "status": "computed",
+      "sha256": "7d3c2983ad2f278d9e799b5792f13f57bf890bd3b03d10b36e53bf0b6677895e",
+      "sha1": "ffce0d9478ae36ba730d226d4cc777b50dfd332e",
+      "md5": "8176b78ba666fb64e72a3ae6a4851793"
+    }
+  },
+  "unavailable": []
+}

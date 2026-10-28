@@ -1,0 +1,117 @@
+{
+  "schema_version": "1.0",
+  "record_type": "event",
+  "id": "58ab4ae6cddebb8a05dfc3939a6016d6",
+  "seq": 1256,
+  "type": "policy.match",
+  "time": "2026-10-07T22:09:46.047892140Z",
+  "observed_time": "2026-10-07T22:09:46.047892140Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "sweep-policy/1"
+  },
+  "provenance": {
+    "provider": "policy",
+    "mechanism": "POLICY",
+    "confidence": "inferred"
+  },
+  "process": {
+    "entity_id": "cc57f6b350c07a31e681951e8138bb2e",
+    "exec_gen": 0,
+    "pid": 439990,
+    "vpid": 439990,
+    "ppid": 439975,
+    "start_time": "2026-10-07T22:09:35.276922318Z",
+    "start_ticks": 1684394,
+    "name": "sleep",
+    "state": "S",
+    "kernel_thread": false,
+    "threads": 1,
+    "confidence": {
+      "identity": "observed",
+      "attributes": "reconstructed"
+    },
+    "executable": {
+      "path": "/usr/bin/sleep",
+      "kind": "file",
+      "dev": 64768,
+      "inode": 918571,
+      "size": 35328,
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "setuid": false,
+      "setgid": false
+    },
+    "args": [
+      "sleep",
+      "7771"
+    ],
+    "args_truncated": false,
+    "cwd": "/home/vagrant/src/panopticon-linux-agent",
+    "creds": {
+      "uid": 0,
+      "euid": 0,
+      "suid": 0,
+      "fsuid": 0,
+      "gid": 0,
+      "egid": 0,
+      "sgid": 0,
+      "fsgid": 0,
+      "groups": [
+        0
+      ],
+      "loginuid": 1000,
+      "sessionid": 158
+    },
+    "caps": {
+      "effective": "000001ffffffffff",
+      "permitted": "000001ffffffffff",
+      "inheritable": "0000000000000000",
+      "bounding": "000001ffffffffff",
+      "ambient": "0000000000000000"
+    },
+    "seccomp": 0,
+    "no_new_privs": false,
+    "ns": {
+      "mnt": 4026531841,
+      "pid": 4026531836,
+      "net": 4026531840,
+      "user": 4026531837,
+      "uts": 4026531838,
+      "ipc": 4026531839,
+      "cgroup": 4026531835
+    },
+    "cgroup": "/user.slice/user-1000.slice/session-158.scope",
+    "unit": "session-158.scope",
+    "pgid": 439969,
+    "sid": 439969,
+    "env": {
+      "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin",
+      "SUDO_COMMAND": "/usr/bin/bash tests/e2e/run_policy_sweep_e2e.sh",
+      "SUDO_UID": "1000",
+      "SUDO_USER": "vagrant"
+    }
+  },
+  "policy": {
+    "outcome": "match",
+    "policy_id": "sweep-policy",
+    "version": 1,
+    "rule_id": "sleep-7771",
+    "action": "recommend_terminate",
+    "severity": "high",
+    "field": "cmdline",
+    "matched": "sleep 7771",
+    "subject": {
+      "type": "process.running",
+      "seq": 1255
+    }
+  },
+  "unavailable": []
+}

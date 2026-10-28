@@ -22,6 +22,7 @@ from manager.routers import (
     health,
     incidents,
     ingest,
+    linux_endpoint,
     response_actions,
     status,
 )
@@ -50,6 +51,7 @@ app = FastAPI(title="Panopticon Manager", lifespan=_lifespan)
 app.include_router(health.router)
 app.include_router(ingest.router)
 app.include_router(endpoint.router)
+app.include_router(linux_endpoint.router)
 app.include_router(enrollment.router)
 app.include_router(commands.router)
 app.include_router(response_actions.router)

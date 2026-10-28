@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "record_type": "state",
+  "id": "68013e0c52b8c09516c7ab8f794d8f67",
+  "seq": 11,
+  "type": "state.persistence",
+  "time": "2026-10-06T03:23:02.200364796Z",
+  "observed_time": "2026-10-06T03:23:02.200364796Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "none"
+  },
+  "provenance": {
+    "provider": "inventory",
+    "mechanism": "FSSCAN",
+    "confidence": "observed"
+  },
+  "state": {
+    "object": "persistence",
+    "snapshot_id": "sensor-0104a7120230-persistence-9",
+    "part": 1,
+    "parts": 7,
+    "items": [
+      {
+        "category": "systemd_unit",
+        "path": "/etc/systemd/system/apt-daily-upgrade.service",
+        "kind": "symlink",
+        "uid": 0,
+        "gid": 0,
+        "mode": 511,
+        "size": 9,
+        "mtime": "2024-01-10T23:56:26.903556725Z",
+        "hash_status": "not_applicable",
+        "target": "/dev/null"
+      },
+      {
+        "category": "systemd_unit",
+        "path": "/etc/systemd/system/cloud-final.service.wants/snapd.seeded.service",
+        "kind": "symlink",
+        "uid": 0,
+        "gid": 0,
+        "mode": 511,
+        "size": 40,
+        "mtime": "2023-08-10T00:20:44.000000000Z",
+        "hash_status": "not_applicable",
+        "target": "/lib/systemd/system/snapd.seeded.service"
+      }
+    ]
+  },
+  "unavailable": []
+}

@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "record_type": "event",
+  "id": "f4796c8007e55cfeead8ffb9467331c2",
+  "seq": 58,
+  "type": "mount.changed",
+  "time": "2026-10-06T03:25:12.272849278Z",
+  "observed_time": "2026-10-06T03:25:12.295132887Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "none"
+  },
+  "provenance": {
+    "provider": "kernel_change",
+    "mechanism": "PROCFS",
+    "confidence": "reconstructed"
+  },
+  "mount": {
+    "operation": "mounted",
+    "source": "tmpfs",
+    "target": "/mnt",
+    "fstype": "tmpfs",
+    "mount_id": 648,
+    "device": "0:45",
+    "options": [
+      "rw",
+      "relatime"
+    ],
+    "super_options": [
+      "rw",
+      "inode64"
+    ]
+  },
+  "unavailable": [
+    {
+      "field": "process",
+      "reason": "not_supported_by_provider"
+    }
+  ]
+}
