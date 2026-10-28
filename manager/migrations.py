@@ -477,6 +477,57 @@ def _migration_21(conn: sqlite3.Connection) -> None:
     )""")
 
 
+def _migration_22(conn: sqlite3.Connection) -> None:
+    """Retain Linux sensor provenance, stream gaps and coverage reports."""
+    conn.execute("""CREATE TABLE IF NOT EXISTS linux_endpoint_records (
+    agent_id    TEXT NOT NULL,
+    record_id   TEXT NOT NULL,
+    sensor_id   TEXT NOT NULL,
+    boot_id     TEXT NOT NULL,
+    seq         INTEGER NOT NULL,
+    host_id     TEXT NOT NULL,
+    record_type TEXT NOT NULL,
+    type        TEXT NOT NULL,
+    event_time  TEXT NOT NULL,
+    ingested_at TEXT NOT NULL,
+    digest      TEXT NOT NULL,
+    raw_json    TEXT NOT NULL,
+    PRIMARY KEY (agent_id, record_id)
+)""")
+    conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS ix_linux_endpoint_stream_seq
+    ON linux_endpoint_records (agent_id, sensor_id, boot_id, seq)""")
+    conn.execute("""CREATE INDEX IF NOT EXISTS ix_linux_endpoint_host_time
+    ON linux_endpoint_records (host_id, event_time)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS linux_endpoint_streams (
+    agent_id        TEXT NOT NULL,
+    sensor_id       TEXT NOT NULL,
+    boot_id         TEXT NOT NULL,
+    host_id         TEXT NOT NULL,
+    first_seq       INTEGER NOT NULL,
+    highest_seq     INTEGER NOT NULL,
+    acked_through   INTEGER NOT NULL,
+    record_count    INTEGER NOT NULL,
+    updated_at      TEXT NOT NULL,
+    PRIMARY KEY (agent_id, sensor_id, boot_id)
+)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS linux_endpoint_detection (
+    agent_id   TEXT NOT NULL,
+    record_id  TEXT NOT NULL,
+    state      TEXT NOT NULL,
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    claimed_at TEXT,
+    PRIMARY KEY (agent_id, record_id)
+)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS linux_endpoint_health (
+    host_id     TEXT PRIMARY KEY,
+    agent_id    TEXT NOT NULL,
+    record_id   TEXT NOT NULL,
+    event_time  TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    health_json TEXT NOT NULL
+)""")
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -499,6 +550,7 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_19,
     _migration_20,
     _migration_21,
+    _migration_22,
 ]
 
 

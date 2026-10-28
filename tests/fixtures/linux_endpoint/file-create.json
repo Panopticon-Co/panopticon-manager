@@ -1,0 +1,109 @@
+{
+  "schema_version": "1.0",
+  "record_type": "event",
+  "id": "e542316409c2d5358cfc317b02d16ca9",
+  "seq": 45,
+  "type": "file.create",
+  "time": "2026-10-06T03:23:04.548491819Z",
+  "observed_time": "2026-10-06T03:23:04.553424728Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "none"
+  },
+  "provenance": {
+    "provider": "fanotify_file",
+    "mechanism": "FANOTIFY",
+    "confidence": "observed"
+  },
+  "process": {
+    "entity_id": "cbf55c07085ab8c1def96ee9cb774932",
+    "exec_gen": 1,
+    "pid": 171977,
+    "vpid": 171977,
+    "ppid": 171976,
+    "start_time": "2026-10-06T03:23:04.522331277Z",
+    "start_ticks": 2801765,
+    "name": "touch",
+    "state": "R",
+    "kernel_thread": false,
+    "threads": 1,
+    "confidence": {
+      "identity": "observed",
+      "attributes": "observed"
+    },
+    "executable": {
+      "path": "/usr/bin/touch",
+      "kind": "file"
+    },
+    "args": [
+      "touch",
+      "/etc/pa1"
+    ],
+    "args_truncated": false,
+    "cwd": "/home/vagrant/src/panopticon-linux-agent",
+    "creds": {
+      "uid": 0,
+      "euid": 0,
+      "suid": 0,
+      "fsuid": 0,
+      "gid": 0,
+      "egid": 0,
+      "sgid": 0,
+      "fsgid": 0,
+      "groups": [
+        0
+      ],
+      "loginuid": 1000,
+      "sessionid": 361
+    },
+    "caps": {
+      "effective": "000001ffffffffff",
+      "permitted": "000001ffffffffff",
+      "inheritable": "0000000000000000",
+      "bounding": "000001ffffffffff",
+      "ambient": "0000000000000000"
+    },
+    "seccomp": 0,
+    "no_new_privs": false,
+    "ns": {
+      "mnt": 4026531841,
+      "pid": 4026531836,
+      "net": 4026531840,
+      "user": 4026531837,
+      "uts": 4026531838,
+      "ipc": 4026531839,
+      "cgroup": 4026531835
+    },
+    "cgroup": "/user.slice/user-1000.slice/session-361.scope",
+    "unit": "session-361.scope",
+    "pgid": 171963,
+    "sid": 171963,
+    "env": {
+      "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin",
+      "SUDO_COMMAND": "/usr/bin/sh -c touch /etc/pa1; mv /etc/pa1 /etc/pa2; rm /etc/pa2; chmod 600 /etc/pa3 2>/dev/null; modprobe dummy; mount -t tmpfs tmpfs /mnt; umount /mnt; rmmod dummy; useradd -M pa_x 2>/dev/null; userdel pa_x 2>/dev/null; cp /bin/true /tmp/pa_true; /tmp/pa_true; python3 -c \"import socket;s=socket.socket();s.bind((\\\"127.0.0.1\\\",4455));s.listen(1);c=socket.socket();c.connect((\\\"127.0.0.1\\\",4455));import time;time.sleep(2.5)\"; su -c true nobody; echo bad | su nobody -s /bin/sh 2>/dev/null",
+      "SUDO_UID": "1000",
+      "SUDO_USER": "vagrant"
+    }
+  },
+  "file": {
+    "path": "/etc/pa1",
+    "name": "pa1",
+    "directory": false,
+    "stat": {
+      "mode": 33188,
+      "uid": 0,
+      "gid": 0,
+      "size": 0,
+      "inode": 2361025,
+      "device": 64768,
+      "mtime": "2026-10-06T03:23:04.544254279Z"
+    }
+  },
+  "unavailable": []
+}

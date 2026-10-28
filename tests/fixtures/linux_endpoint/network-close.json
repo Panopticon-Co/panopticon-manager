@@ -1,0 +1,135 @@
+{
+  "schema_version": "1.0",
+  "record_type": "event",
+  "id": "911913fd9d1cbf54171ebddfdd4b849e",
+  "seq": 103,
+  "type": "network.close",
+  "time": "2026-10-07T13:40:20.931356130Z",
+  "observed_time": "2026-10-07T13:40:20.942336302Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "contract-e2e/1"
+  },
+  "provenance": {
+    "provider": "ebpf",
+    "mechanism": "tcp_close",
+    "confidence": "observed"
+  },
+  "process": {
+    "entity_id": "847217c9e6d1188f07fe63d55d1434c7",
+    "exec_gen": 1,
+    "pid": 354676,
+    "vpid": 354676,
+    "ppid": 354607,
+    "start_time": "2026-10-07T13:40:20.869976206Z",
+    "start_ticks": 2343133,
+    "name": "curl",
+    "state": "R",
+    "kernel_thread": false,
+    "threads": 1,
+    "confidence": {
+      "identity": "observed",
+      "attributes": "observed"
+    },
+    "executable": {
+      "path": "/usr/bin/curl",
+      "kind": "file",
+      "dev": 64768,
+      "inode": 952109,
+      "size": 260328,
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "setuid": false,
+      "setgid": false
+    },
+    "args": [
+      "curl",
+      "-s",
+      "http://127.0.0.1:18080/"
+    ],
+    "args_truncated": false,
+    "stdio": {
+      "stdin": "pipe",
+      "stdout": "null",
+      "stderr": "pipe"
+    },
+    "cwd": "/home/vagrant/src/panopticon-linux-agent",
+    "creds": {
+      "uid": 1000,
+      "euid": 1000,
+      "suid": 1000,
+      "fsuid": 1000,
+      "gid": 1000,
+      "egid": 1000,
+      "sgid": 1000,
+      "fsgid": 1000,
+      "groups": [
+        1000
+      ],
+      "loginuid": 1000,
+      "sessionid": 775
+    },
+    "caps": {
+      "effective": "0000000000000000",
+      "permitted": "0000000000000000",
+      "inheritable": "0000000000000000",
+      "bounding": "000001ffffffffff",
+      "ambient": "0000000000000000"
+    },
+    "seccomp": 0,
+    "no_new_privs": false,
+    "ns": {
+      "mnt": 4026531841,
+      "pid": 4026531836,
+      "net": 4026531840,
+      "user": 4026531837,
+      "uts": 4026531838,
+      "ipc": 4026531839,
+      "cgroup": 4026531835
+    },
+    "cgroup": "/user.slice/user-1000.slice/session-775.scope",
+    "unit": "session-775.scope",
+    "pgid": 354607,
+    "sid": 354607,
+    "env": {
+      "PATH": "/home/vagrant/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+      "SSH_CLIENT": "10.0.2.2 42064 22",
+      "SSH_CONNECTION": "10.0.2.2 42064 10.0.2.15 22"
+    }
+  },
+  "network": {
+    "transport": "tcp",
+    "family": "ipv4",
+    "direction": "outbound",
+    "local": {
+      "ip": "127.0.0.1",
+      "port": 56078
+    },
+    "remote": {
+      "ip": "127.0.0.1",
+      "port": 18080
+    },
+    "tags": [
+      "loopback"
+    ],
+    "state": "close_wait",
+    "socket_inode": 0,
+    "uid": 1000,
+    "bytes_sent": 79,
+    "bytes_received": 1843,
+    "duration_ns": 12858393
+  },
+  "unavailable": [
+    {
+      "field": "network.socket_inode",
+      "reason": "not_supported_by_provider"
+    }
+  ]
+}

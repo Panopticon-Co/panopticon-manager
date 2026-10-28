@@ -1,0 +1,148 @@
+{
+  "schema_version": "1.0",
+  "record_type": "event",
+  "id": "3c576ae984c80db257f95cccf702c1fe",
+  "seq": 73,
+  "type": "process.rename",
+  "time": "2026-10-06T03:23:04.687304275Z",
+  "observed_time": "2026-10-06T03:23:04.698810803Z",
+  "host": {
+    "id": "0104a71202304516860b2a6fa481f00e",
+    "boot_id": "a4d9d0e1-c8d8-4a67-a703-bdf6f6f01263",
+    "hostname": "ubuntu2204.localdomain"
+  },
+  "sensor": {
+    "id": "sensor-0104a7120230",
+    "version": "0.1.0",
+    "policy_version": "none"
+  },
+  "provenance": {
+    "provider": "ebpf",
+    "mechanism": "task_rename",
+    "confidence": "observed"
+  },
+  "process": {
+    "entity_id": "12a60155f1e31ec418fb2c5aa52bb6cb",
+    "exec_gen": 0,
+    "pid": 171985,
+    "vpid": 171985,
+    "ppid": 2,
+    "start_time": "2026-10-06T03:23:04.682331277Z",
+    "start_ticks": 2801781,
+    "name": "kworker/4:0",
+    "state": "S",
+    "kernel_thread": true,
+    "threads": 1,
+    "confidence": {
+      "identity": "observed",
+      "attributes": "reconstructed"
+    },
+    "executable": {
+      "path": "",
+      "kind": "anonymous"
+    },
+    "args": [],
+    "args_truncated": false,
+    "creds": {
+      "uid": 0,
+      "euid": 0,
+      "suid": 0,
+      "fsuid": 0,
+      "gid": 0,
+      "egid": 0,
+      "sgid": 0,
+      "fsgid": 0,
+      "groups": [],
+      "loginuid": null,
+      "sessionid": null
+    },
+    "caps": {
+      "effective": "000001ffffffffff",
+      "permitted": "000001ffffffffff",
+      "inheritable": "0000000000000000",
+      "bounding": "000001ffffffffff",
+      "ambient": "0000000000000000"
+    },
+    "seccomp": 0,
+    "no_new_privs": false,
+    "ns": {
+      "mnt": 4026531841,
+      "pid": 4026531836,
+      "net": 4026531840,
+      "user": 4026531837,
+      "uts": 4026531838,
+      "ipc": 4026531839,
+      "cgroup": 4026531835
+    },
+    "cgroup": "/",
+    "pgid": 0,
+    "sid": 0,
+    "ancestry": [
+      {
+        "entity_id": "98738c56af917d38792a8156512a30f4",
+        "pid": 2,
+        "name": "kthreadd",
+        "executable": ""
+      }
+    ]
+  },
+  "parent": {
+    "entity_id": "98738c56af917d38792a8156512a30f4",
+    "exec_gen": 0,
+    "pid": 2,
+    "vpid": 2,
+    "ppid": 0,
+    "start_time": "2026-10-05T19:36:08.262331277Z",
+    "start_ticks": 139,
+    "name": "kthreadd",
+    "state": "S",
+    "kernel_thread": true,
+    "threads": 1,
+    "confidence": {
+      "identity": "observed",
+      "attributes": "reconstructed"
+    },
+    "executable": {
+      "path": "",
+      "kind": "anonymous"
+    },
+    "args": [],
+    "args_truncated": false,
+    "creds": {
+      "uid": 0,
+      "euid": 0,
+      "suid": 0,
+      "fsuid": 0,
+      "gid": 0,
+      "egid": 0,
+      "sgid": 0,
+      "fsgid": 0,
+      "groups": [],
+      "loginuid": null,
+      "sessionid": null
+    },
+    "caps": {
+      "effective": "000001ffffffffff",
+      "permitted": "000001ffffffffff",
+      "inheritable": "0000000000000000",
+      "bounding": "000001ffffffffff",
+      "ambient": "0000000000000000"
+    },
+    "seccomp": 0,
+    "no_new_privs": false,
+    "ns": {
+      "mnt": 4026531841,
+      "pid": 4026531836,
+      "net": 4026531840,
+      "user": 4026531837,
+      "uts": 4026531838,
+      "ipc": 4026531839,
+      "cgroup": 4026531835
+    },
+    "cgroup": "/",
+    "pgid": 0,
+    "sid": 0
+  },
+  "previous_name": "kthreadd",
+  "unavailable": []
+}

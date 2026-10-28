@@ -1,0 +1,2923 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://panopticon.co/schema/linux-endpoint/1.0.schema.json",
+  "title": "Panopticon Linux endpoint record 1.0",
+  "description": "One NDJSON line produced by panopticon-sensord. Envelope and event bodies are closed (additionalProperties false); state items beyond processes are open objects whose fields are documented in the telemetry catalog.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "record_type": {
+      "enum": [
+        "event",
+        "state",
+        "health",
+        "loss"
+      ]
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)?$"
+    },
+    "time": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{9}Z$"
+    },
+    "observed_time": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{9}Z$"
+    },
+    "host": {
+      "$ref": "#/$defs/Host"
+    },
+    "sensor": {
+      "$ref": "#/$defs/Sensor"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "process": {
+      "$ref": "#/$defs/ProcessRef"
+    },
+    "parent": {
+      "$ref": "#/$defs/Process"
+    },
+    "target": {
+      "$ref": "#/$defs/Process"
+    },
+    "executable": {
+      "$ref": "#/$defs/Executable"
+    },
+    "previous_executable": {
+      "type": "string"
+    },
+    "previous_name": {
+      "type": "string"
+    },
+    "technique": {
+      "type": "string"
+    },
+    "creds_before": {
+      "$ref": "#/$defs/CredsBefore"
+    },
+    "file": {
+      "$ref": "#/$defs/File"
+    },
+    "network": {
+      "$ref": "#/$defs/Network"
+    },
+    "auth": {
+      "$ref": "#/$defs/Auth"
+    },
+    "module": {
+      "$ref": "#/$defs/Module"
+    },
+    "mount": {
+      "$ref": "#/$defs/Mount"
+    },
+    "fim": {
+      "$ref": "#/$defs/Fim"
+    },
+    "health": {
+      "$ref": "#/$defs/Health"
+    },
+    "loss": {
+      "$ref": "#/$defs/Loss"
+    },
+    "state": {
+      "$ref": "#/$defs/State"
+    },
+    "unavailable": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Unavailable"
+      }
+    },
+    "change": {
+      "$ref": "#/$defs/Change"
+    },
+    "memory": {
+      "$ref": "#/$defs/Memory"
+    },
+    "bpf": {
+      "$ref": "#/$defs/Bpf"
+    },
+    "ns_change": {
+      "$ref": "#/$defs/NsChange"
+    },
+    "dns": {
+      "$ref": "#/$defs/Dns"
+    },
+    "lsm": {
+      "$ref": "#/$defs/Lsm"
+    },
+    "netfilter": {
+      "$ref": "#/$defs/Netfilter"
+    },
+    "response": {
+      "$ref": "#/$defs/Response"
+    },
+    "policy": {
+      "$ref": "#/$defs/Policy"
+    },
+    "signal": {
+      "$ref": "#/$defs/Signal"
+    },
+    "socket": {
+      "$ref": "#/$defs/Socket"
+    },
+    "container": {
+      "$ref": "#/$defs/ContainerLifecycle"
+    },
+    "tamper": {
+      "$ref": "#/$defs/Tamper"
+    }
+  },
+  "required": [
+    "schema_version",
+    "record_type",
+    "id",
+    "seq",
+    "type",
+    "time",
+    "observed_time",
+    "host",
+    "sensor",
+    "provenance",
+    "unavailable"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "event"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "health"
+              ]
+            },
+            {
+              "required": [
+                "loss"
+              ]
+            },
+            {
+              "required": [
+                "state"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "state"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "state"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "health"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "health"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "loss"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "loss"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "state"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "type": {
+            "pattern": "^state\\."
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^file\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "file"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^network\\.",
+            "not": {
+              "const": "network.raw_socket"
+            }
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "network"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^auth\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "auth"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^kernel\\.module_"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "module"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^kernel\\.bpf_"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "process",
+          "bpf"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^memory\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "process",
+          "memory"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^mount\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "mount"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^fim\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "fim"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^process\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "process"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^(posture|interface|account|package|device|firewall)\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "change"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^process\\.ns_change$"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "process",
+          "ns_change"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^dns\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "process",
+          "dns"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^lsm\\.denial$"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "process",
+          "lsm"
+        ],
+        "properties": {
+          "lsm": {
+            "required": [
+              "outcome"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^lsm\\.policy$"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "lsm"
+        ],
+        "properties": {
+          "lsm": {
+            "not": {
+              "required": [
+                "outcome"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^netfilter\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "netfilter"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^response\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "response"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^policy\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "policy"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^tamper\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "tamper"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "policy.match"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "policy": {
+            "properties": {
+              "outcome": {
+                "const": "match"
+              },
+              "reason": false,
+              "detail": false,
+              "previous_version": false,
+              "key_id": false,
+              "rules": false,
+              "indicators": false,
+              "expires_at": false
+            },
+            "required": [
+              "policy_id",
+              "version",
+              "rule_id",
+              "action",
+              "severity",
+              "field",
+              "matched",
+              "subject"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "policy.change"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "policy": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "loaded",
+                  "rejected",
+                  "expired",
+                  "removed"
+                ]
+              },
+              "rule_id": false,
+              "action": false,
+              "severity": false,
+              "field": false,
+              "matched": false,
+              "subject": false
+            },
+            "required": [
+              "reason",
+              "detail"
+            ],
+            "if": {
+              "properties": {
+                "outcome": {
+                  "enum": [
+                    "loaded",
+                    "expired",
+                    "removed"
+                  ]
+                }
+              },
+              "required": [
+                "outcome"
+              ]
+            },
+            "then": {
+              "required": [
+                "policy_id",
+                "version",
+                "key_id",
+                "rules",
+                "indicators",
+                "expires_at"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "network.raw_socket"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "process",
+          "socket"
+        ],
+        "not": {
+          "required": [
+            "network"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "process.signal"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "process",
+          "signal"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "network.close"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "network": {
+            "required": [
+              "bytes_sent",
+              "bytes_received"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^container\\."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "container"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "container.stopped"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "container": {
+            "required": [
+              "start_observed",
+              "peak_processes"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "signal"
+        ]
+      },
+      "then": {
+        "properties": {
+          "type": {
+            "const": "process.signal"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "socket"
+        ]
+      },
+      "then": {
+        "properties": {
+          "type": {
+            "const": "network.raw_socket"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "container"
+        ]
+      },
+      "then": {
+        "properties": {
+          "type": {
+            "pattern": "^container\\."
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "tamper"
+        ]
+      },
+      "then": {
+        "properties": {
+          "type": {
+            "pattern": "^tamper\\."
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "Timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{9}Z$"
+    },
+    "Confidence": {
+      "enum": [
+        "observed",
+        "reconstructed",
+        "inferred",
+        "user_space_reported"
+      ]
+    },
+    "Host": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "boot_id": {
+          "type": "string"
+        },
+        "hostname": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "boot_id",
+        "hostname"
+      ]
+    },
+    "Sensor": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "policy_version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "policy_version"
+      ]
+    },
+    "Provenance": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "mechanism": {
+          "type": "string"
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "mechanism",
+        "confidence"
+      ]
+    },
+    "Unavailable": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "not_supported_by_provider",
+            "process_exited",
+            "permission_denied",
+            "truncated",
+            "budget_exceeded",
+            "not_applicable",
+            "kernel_feature_missing",
+            "object_gone"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "reason"
+      ]
+    },
+    "Hash": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sha1": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "md5": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ]
+    },
+    "Executable": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "file",
+            "deleted",
+            "memfd",
+            "anonymous",
+            "unknown"
+          ]
+        },
+        "dev": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inode": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mode": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "uid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "setuid": {
+          "type": "boolean"
+        },
+        "setgid": {
+          "type": "boolean"
+        },
+        "hash": {
+          "$ref": "#/$defs/Hash"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ]
+    },
+    "Creds": {
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "euid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "suid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fsuid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "egid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sgid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fsgid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "loginuid": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "sessionid": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "uid",
+        "euid",
+        "suid",
+        "fsuid",
+        "gid",
+        "egid",
+        "sgid",
+        "fsgid",
+        "groups",
+        "loginuid",
+        "sessionid"
+      ]
+    },
+    "Capabilities": {
+      "type": "object",
+      "properties": {
+        "effective": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "permitted": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "inheritable": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "bounding": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "ambient": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "effective",
+        "permitted",
+        "inheritable",
+        "bounding",
+        "ambient"
+      ]
+    },
+    "Ancestor": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string"
+        },
+        "executable": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entity_id",
+        "pid",
+        "name",
+        "executable"
+      ]
+    },
+    "Process": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "exec_gen": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "vpid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ppid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "start_time": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{9}Z$"
+        },
+        "start_ticks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1
+        },
+        "kernel_thread": {
+          "type": "boolean"
+        },
+        "threads": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "confidence": {
+          "type": "object",
+          "properties": {
+            "identity": {
+              "enum": [
+                "observed",
+                "reconstructed",
+                "inferred",
+                "user_space_reported"
+              ]
+            },
+            "attributes": {
+              "enum": [
+                "observed",
+                "reconstructed",
+                "inferred",
+                "user_space_reported"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "identity",
+            "attributes"
+          ]
+        },
+        "executable": {
+          "$ref": "#/$defs/Executable"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "args_truncated": {
+          "type": "boolean"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "creds": {
+          "$ref": "#/$defs/Creds"
+        },
+        "caps": {
+          "$ref": "#/$defs/Capabilities"
+        },
+        "seccomp": {
+          "type": "integer"
+        },
+        "no_new_privs": {
+          "type": "boolean"
+        },
+        "ns": {
+          "type": "object",
+          "properties": {
+            "mnt": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "pid": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "net": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "user": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "uts": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "ipc": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "cgroup": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "cgroup": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "container": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{12,64}$"
+            },
+            "runtime": {
+              "enum": [
+                "docker",
+                "containerd",
+                "crio",
+                "podman",
+                "kubernetes"
+              ]
+            },
+            "pod_uid": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "runtime"
+          ]
+        },
+        "tty": {
+          "type": "string"
+        },
+        "pgid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "exit_signal": {
+          "type": "integer"
+        },
+        "core_dumped": {
+          "type": "boolean"
+        },
+        "ancestry": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Ancestor"
+          }
+        },
+        "stdio": {
+          "type": "object",
+          "properties": {
+            "stdin": {
+              "enum": [
+                "closed",
+                "socket",
+                "pipe",
+                "tty",
+                "file",
+                "null",
+                "other"
+              ]
+            },
+            "stdout": {
+              "enum": [
+                "closed",
+                "socket",
+                "pipe",
+                "tty",
+                "file",
+                "null",
+                "other"
+              ]
+            },
+            "stderr": {
+              "enum": [
+                "closed",
+                "socket",
+                "pipe",
+                "tty",
+                "file",
+                "null",
+                "other"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "stdin",
+            "stdout",
+            "stderr"
+          ]
+        },
+        "interpreter": {
+          "type": "string",
+          "minLength": 1
+        },
+        "script": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "exec_gen",
+        "pid",
+        "ppid",
+        "name",
+        "state",
+        "kernel_thread",
+        "threads",
+        "confidence",
+        "executable",
+        "args",
+        "args_truncated",
+        "creds",
+        "caps",
+        "ns",
+        "pgid",
+        "sid"
+      ],
+      "dependentRequired": {
+        "interpreter": [
+          "script"
+        ]
+      }
+    },
+    "ProcessStub": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "exec_gen": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pid"
+      ]
+    },
+    "ProcessRef": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Process"
+        },
+        {
+          "$ref": "#/$defs/ProcessStub"
+        }
+      ]
+    },
+    "CredsBefore": {
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "euid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "egid": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "uid",
+        "euid",
+        "gid",
+        "egid"
+      ]
+    },
+    "File": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "directory": {
+          "type": "boolean"
+        },
+        "old_path": {
+          "type": "string"
+        },
+        "stat": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "uid": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "gid": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "size": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "inode": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "device": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "mtime": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{9}Z$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "uid",
+            "gid",
+            "size",
+            "inode",
+            "device",
+            "mtime"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "directory"
+      ]
+    },
+    "Network": {
+      "type": "object",
+      "properties": {
+        "transport": {
+          "type": "string"
+        },
+        "family": {
+          "enum": [
+            "ipv4",
+            "ipv6"
+          ]
+        },
+        "direction": {
+          "enum": [
+            "outbound",
+            "inbound",
+            "listen",
+            "unknown"
+          ]
+        },
+        "local": {
+          "type": "object",
+          "properties": {
+            "ip": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ip",
+            "port"
+          ]
+        },
+        "remote": {
+          "type": "object",
+          "properties": {
+            "ip": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ip",
+            "port"
+          ]
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "state": {
+          "type": "string"
+        },
+        "socket_inode": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "uid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "holders": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bytes_sent": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bytes_received": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duration_ns": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "transport",
+        "family",
+        "direction",
+        "local",
+        "tags",
+        "state",
+        "socket_inode",
+        "uid"
+      ]
+    },
+    "Auth": {
+      "type": "object",
+      "properties": {
+        "service": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "success",
+            "failure"
+          ]
+        },
+        "user": {
+          "type": "string"
+        },
+        "target_user": {
+          "type": "string"
+        },
+        "invalid_user": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "ip": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ip",
+            "port"
+          ]
+        },
+        "key": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "fingerprint": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "fingerprint"
+          ]
+        },
+        "tty": {
+          "type": "string"
+        },
+        "working_directory": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "sanitized": {
+          "type": "boolean"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "service",
+        "outcome",
+        "user"
+      ]
+    },
+    "Module": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "size"
+      ]
+    },
+    "Mount": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "enum": [
+            "mounted",
+            "unmounted",
+            "remounted"
+          ]
+        },
+        "source": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "fstype": {
+          "type": "string"
+        },
+        "mount_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "device": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "super_options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "source",
+        "target",
+        "fstype",
+        "mount_id",
+        "device",
+        "options",
+        "super_options"
+      ]
+    },
+    "Fim": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "items": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "path": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "change": {
+          "type": "string"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "before": {
+          "type": "object"
+        },
+        "after": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Health": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "capabilities": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "events": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "drops": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "family": {
+                "type": "string"
+              },
+              "tier": {
+                "enum": [
+                  "primary",
+                  "fallback"
+                ]
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "state",
+              "reason",
+              "capabilities",
+              "events",
+              "drops"
+            ]
+          }
+        },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "rss_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "cpu_milliseconds": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "wal_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "wal_records": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "rss_bytes",
+            "cpu_milliseconds",
+            "wal_bytes",
+            "wal_records"
+          ]
+        },
+        "kernel": {
+          "type": "object",
+          "properties": {
+            "release": {
+              "type": "string"
+            },
+            "btf": {
+              "type": "boolean"
+            },
+            "bpf_lsm": {
+              "type": "boolean"
+            },
+            "ringbuf": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "release",
+            "btf",
+            "bpf_lsm",
+            "ringbuf"
+          ]
+        },
+        "wal": {
+          "type": "object",
+          "properties": {
+            "next_seq": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "durable_seq": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "acknowledged_seq": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "dropped_records": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "next_seq",
+            "durable_seq",
+            "acknowledged_seq",
+            "dropped_records"
+          ]
+        },
+        "totals": {
+          "type": "object",
+          "properties": {
+            "records": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "events": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "loss_records": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sink_errors": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "uptime_ms": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "records",
+            "events",
+            "loss_records",
+            "sink_errors",
+            "uptime_ms"
+          ]
+        },
+        "delivery": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "idle",
+                "delivering",
+                "backing_off",
+                "unauthorized",
+                "rejected"
+              ]
+            },
+            "acknowledged_seq": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "batches_sent": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "records_acknowledged": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "retries": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "refusals": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "consecutive_failures": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "records_quarantined": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "quarantine_failures": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "recent_quarantined_seqs": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "maxItems": 16
+            },
+            "last_error": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "acknowledged_seq",
+            "batches_sent",
+            "records_acknowledged",
+            "retries",
+            "refusals",
+            "consecutive_failures",
+            "records_quarantined",
+            "quarantine_failures",
+            "recent_quarantined_seqs"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "providers",
+        "coverage",
+        "resources",
+        "kernel"
+      ]
+    },
+    "Loss": {
+      "type": "object",
+      "properties": {
+        "stage": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_type": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "count",
+        "by_type"
+      ]
+    },
+    "State": {
+      "type": "object",
+      "properties": {
+        "object": {
+          "type": "string"
+        },
+        "snapshot_id": {
+          "type": "string"
+        },
+        "part": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "parts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "object",
+        "snapshot_id",
+        "part",
+        "parts",
+        "items"
+      ]
+    },
+    "Change": {
+      "type": "object",
+      "description": "Differences between two consecutive inventories of one host-state object. A baseline is never a change.",
+      "properties": {
+        "object": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "part": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "parts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "added",
+                  "removed",
+                  "modified"
+                ]
+              },
+              "before": {},
+              "after": {}
+            },
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "kind"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "object",
+        "total",
+        "part",
+        "parts",
+        "truncated",
+        "entries"
+      ]
+    },
+    "Memory": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "enum": [
+            "mmap",
+            "mprotect"
+          ]
+        },
+        "backing": {
+          "enum": [
+            "anonymous",
+            "memfd",
+            "file"
+          ]
+        },
+        "write_exec": {
+          "type": "boolean"
+        },
+        "address": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "backing",
+        "write_exec"
+      ]
+    },
+    "Bpf": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "prog_load",
+            "prog_attach",
+            "raw_tracepoint_open",
+            "link_create"
+          ]
+        },
+        "program_type": {
+          "type": "string"
+        },
+        "attach_type": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ]
+    },
+    "NsChange": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "enum": [
+            "process",
+            "thread"
+          ]
+        },
+        "thread_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "changes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "ns": {
+                "enum": [
+                  "mnt",
+                  "pid_for_children",
+                  "net",
+                  "uts",
+                  "ipc",
+                  "cgroup"
+                ]
+              },
+              "from": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "to": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "ns",
+              "from",
+              "to"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "thread_id",
+        "changes"
+      ]
+    },
+    "Dns": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1020
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transaction_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "recursion_desired": {
+          "type": "boolean"
+        },
+        "transport": {
+          "enum": [
+            "udp"
+          ]
+        },
+        "family": {
+          "enum": [
+            "ipv4",
+            "ipv6"
+          ]
+        },
+        "server": {
+          "type": "object",
+          "properties": {
+            "ip": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ip",
+            "port"
+          ]
+        },
+        "local": {
+          "type": "object",
+          "properties": {
+            "ip": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ip",
+            "port"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type",
+        "class",
+        "transaction_id",
+        "recursion_desired",
+        "transport",
+        "family",
+        "server",
+        "local"
+      ]
+    },
+    "Lsm": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "enum": [
+            "apparmor",
+            "selinux"
+          ]
+        },
+        "operation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "outcome": {
+          "enum": [
+            "denied",
+            "would_deny"
+          ]
+        },
+        "object": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "requested": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "denied": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "profile": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "target_context": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "object_class": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "comm": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "sanitized": {
+          "const": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "module",
+        "operation"
+      ]
+    },
+    "Netfilter": {
+      "type": "object",
+      "properties": {
+        "subsystem": {
+          "enum": [
+            "nft",
+            "xtables",
+            "other"
+          ]
+        },
+        "operation": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]{1,48}$"
+        },
+        "table": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "family": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "entries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "comm": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "subsystem",
+        "operation",
+        "table",
+        "family",
+        "entries"
+      ]
+    },
+    "Response": {
+      "type": "object",
+      "properties": {
+        "command_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{0,120}$"
+        },
+        "correlation_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{0,120}$"
+        },
+        "action": {
+          "enum": [
+            "KILL_PROCESS",
+            "COLLECT_PROCESS_INFO",
+            "COLLECT_NETWORK_CONNECTIONS",
+            "COLLECT_FILE",
+            "QUARANTINE_FILE",
+            "ISOLATE_HOST",
+            "RELEASE_HOST_ISOLATION",
+            "UNKNOWN"
+          ]
+        },
+        "outcome": {
+          "enum": [
+            "succeeded",
+            "failed",
+            "rejected",
+            "indeterminate"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "pattern": "^[a-z_]{1,48}$"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "executed": {
+          "type": "boolean"
+        },
+        "mode": {
+          "enum": [
+            "pidfd",
+            "pid_fallback"
+          ]
+        },
+        "target": {
+          "type": "object",
+          "properties": {
+            "pid": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "start_time_ticks": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "pid",
+            "start_time_ticks"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "affected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command_id",
+        "correlation_id",
+        "action",
+        "outcome",
+        "reason",
+        "dry_run",
+        "executed"
+      ]
+    },
+    "Policy": {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "enum": [
+            "match",
+            "loaded",
+            "rejected",
+            "expired",
+            "removed"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "pattern": "^[a-z_]{1,48}$"
+        },
+        "policy_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,128}$"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "previous_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "key_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "rules": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "indicators": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expires_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "rule_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._*-]{1,64}$"
+        },
+        "action": {
+          "enum": [
+            "alert",
+            "recommend_terminate",
+            "recommend_quarantine",
+            "recommend_block"
+          ]
+        },
+        "severity": {
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        "field": {
+          "enum": [
+            "exe",
+            "cmdline",
+            "sha256",
+            "file_path",
+            "dest_ip",
+            "dest_domain"
+          ]
+        },
+        "matched": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "subject": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)?$"
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "seq"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 1024
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "outcome"
+      ]
+    },
+    "Signal": {
+      "type": "object",
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "via": {
+          "enum": [
+            "kill",
+            "tgkill",
+            "sigqueue",
+            "other"
+          ]
+        },
+        "result": {
+          "enum": [
+            "delivered",
+            "ignored",
+            "already_pending",
+            "overflow",
+            "info_lost"
+          ]
+        },
+        "target_is_sensor": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "number",
+        "name",
+        "via",
+        "result",
+        "target_is_sensor"
+      ]
+    },
+    "Socket": {
+      "type": "object",
+      "properties": {
+        "family": {
+          "enum": [
+            "inet",
+            "inet6",
+            "packet"
+          ]
+        },
+        "type": {
+          "enum": [
+            "stream",
+            "dgram",
+            "raw",
+            "rdm",
+            "seqpacket",
+            "dccp",
+            "packet"
+          ]
+        },
+        "protocol": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "protocol_name": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "family",
+        "type",
+        "protocol"
+      ]
+    },
+    "ContainerLifecycle": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{12,64}$"
+        },
+        "runtime": {
+          "enum": [
+            "docker",
+            "containerd",
+            "crio",
+            "podman",
+            "kubernetes"
+          ]
+        },
+        "pod_uid": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "cgroup": {
+          "type": "string",
+          "minLength": 1
+        },
+        "start_observed": {
+          "type": "boolean"
+        },
+        "lifetime_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "peak_processes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "runtime",
+        "cgroup"
+      ]
+    },
+    "Tamper": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "violated",
+            "restored"
+          ]
+        },
+        "technique": {
+          "enum": [
+            "binary_modified",
+            "binary_missing",
+            "binary_replaced",
+            "manifest_invalid",
+            "manifest_missing",
+            "manifest_rollback"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "expected_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "observed_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "manifest_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "key_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "files_checked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "files_in_violation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_change": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "enum": [
+                "create",
+                "modify",
+                "delete",
+                "rename",
+                "attrib"
+              ]
+            },
+            "time": {
+              "$ref": "#/$defs/Timestamp"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "operation",
+            "time"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 1024
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "technique",
+        "target",
+        "files_checked",
+        "files_in_violation",
+        "detail"
+      ]
+    }
+  }
+}
