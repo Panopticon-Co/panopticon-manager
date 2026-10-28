@@ -45,6 +45,9 @@ jobs:
           ref: 844fe218f2c91807438f2db65509ee488469f002
           path: _response-console-checkout
 
+      - name: Move Console to sibling path (separate repository lint policy)
+        run: mv _response-console-checkout ../panopticon-console
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
@@ -64,4 +67,4 @@ jobs:
           pytest -v tests/
 
       - name: Verify real Console to Manager response HTTP workflow
-        run: python tools/verify_response_console.py --console-dir _response-console-checkout
+        run: python tools/verify_response_console.py --console-dir ../panopticon-console
