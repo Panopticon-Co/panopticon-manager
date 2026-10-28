@@ -88,6 +88,12 @@ def _insert(conn: sqlite3.Connection, agent_id: str, rec: StoredRecord, now: str
             rec.raw,
         ),
     )
+    if rec.record_type == "event" and rec.type == "process.exec":
+        conn.execute(
+            "INSERT INTO linux_endpoint_detection (agent_id,record_id,state) "
+            "VALUES (?,?,'pending')",
+            (agent_id, rec.record_id),
+        )
     if rec.health is None:
         return
     conn.execute(

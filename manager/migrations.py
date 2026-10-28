@@ -528,6 +528,19 @@ def _migration_22(conn: sqlite3.Connection) -> None:
 )""")
 
 
+def _migration_23(conn: sqlite3.Connection) -> None:
+    """Queue existing Linux process records without replaying completed work."""
+    conn.execute(
+        "INSERT OR IGNORE INTO linux_endpoint_detection (agent_id,record_id,state) "
+        "SELECT agent_id,record_id,'pending' FROM linux_endpoint_records "
+        "WHERE record_type='event' AND type='process.exec'"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_linux_detection_state "
+        "ON linux_endpoint_detection(state,agent_id,record_id)"
+    )
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -551,6 +564,7 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_20,
     _migration_21,
     _migration_22,
+    _migration_23,
 ]
 
 

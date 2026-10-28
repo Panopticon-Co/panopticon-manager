@@ -22,6 +22,8 @@ from pathlib import Path
 
 import manager.vendor_path  # noqa: F401  (sys.path side effect, must precede engine imports)
 from manager.detection.factory import build_detection_run, prune_graph
+from manager.detection.linux_mapper import to_engine_event
+from response_engine.linux_identity import linux_endpoint_context
 from manager.timeutil import iso_at, iso_now
 from panopticon_detection.ingestion.endpoint_adapter import EndpointIngestionAdapter
 from panopticon_detection.ingestion.officer_adapter import OfficerIngestionAdapter
@@ -106,6 +108,11 @@ class DetectionWorker:
                 "WHERE detect_state='claimed' AND (claimed_at IS NULL OR claimed_at < ?)",
                 (cutoff,),
             ).rowcount
+            n += conn.execute(
+                "UPDATE linux_endpoint_detection SET state='pending',claimed_at=NULL "
+                "WHERE state='claimed' AND (claimed_at IS NULL OR claimed_at < ?)",
+                (cutoff,),
+            ).rowcount
             conn.commit()
         except Exception:
             conn.rollback()
@@ -136,13 +143,27 @@ class DetectionWorker:
                 "ORDER BY ingested_at,agent_id,record_id LIMIT ?",
                 (CLAIM_LIMIT,),
             ).fetchall()
-            # Reserve half a batch for each producer protocol when both have
-            # backlog, then use spare capacity from either. A legacy backlog
-            # must not prevent new Windows records reaching fleet detection.
-            take_legacy = min(len(legacy), CLAIM_LIMIT // 2)
-            take_canonical = min(len(canonical), CLAIM_LIMIT - take_legacy)
-            take_legacy = min(len(legacy), CLAIM_LIMIT - take_canonical)
-            rows = legacy[:take_legacy] + canonical[:take_canonical]
+            linux = conn.execute(
+                "SELECT r.record_id AS event_id,r.agent_id,r.raw_json,'linux' AS queue "
+                "FROM linux_endpoint_detection d JOIN linux_endpoint_records r "
+                "ON r.agent_id=d.agent_id AND r.record_id=d.record_id "
+                "WHERE d.state='pending' ORDER BY r.ingested_at,r.rowid LIMIT ?",
+                (CLAIM_LIMIT,),
+            ).fetchall()
+            # Share bounded capacity across active protocols; refill spare slots.
+            queues = [legacy, canonical, linux]
+            take = [0, 0, 0]
+            remaining = CLAIM_LIMIT
+            while remaining:
+                changed = False
+                for i, queue in enumerate(queues):
+                    if remaining and take[i] < len(queue):
+                        take[i] += 1
+                        remaining -= 1
+                        changed = True
+                if not changed:
+                    break
+            rows = [row for queue, count in zip(queues, take) for row in queue[:count]]
             if rows:
                 claimed_at = iso_now()
                 conn.executemany(
@@ -156,6 +177,15 @@ class DetectionWorker:
                         (claimed_at, r["agent_id"], r["event_id"])
                         for r in rows
                         if r["queue"] == "endpoint"
+                    ],
+                )
+                conn.executemany(
+                    "UPDATE linux_endpoint_detection SET state='claimed',claimed_at=? "
+                    "WHERE agent_id=? AND record_id=?",
+                    [
+                        (claimed_at, r["agent_id"], r["event_id"])
+                        for r in rows
+                        if r["queue"] == "linux"
                     ],
                 )
             conn.commit()
@@ -172,11 +202,29 @@ class DetectionWorker:
             try:
                 event = self._normalize(row["raw_json"])
                 sink.agent_id = row["agent_id"]
+                sink.linux_context = None
+                if row["queue"] == "linux":
+                    raw = json.loads(row["raw_json"])
+                    # Invalid native identity still carries an explicit context:
+                    # response translation must never fall back to a legacy PID.
+                    sink.linux_context = linux_endpoint_context(raw, row["agent_id"]) or {
+                        "identity_model": "linux_endpoint_v1",
+                        "record_id": raw["id"],
+                        "endpoint": {"agent_id": row["agent_id"], "host_id": raw["host"]["id"]},
+                        "subject": {},
+                    }
+                    sink.linux_context["provenance"] = raw.get("provenance", {})
                 conn.execute("BEGIN IMMEDIATE")
                 run.process_event(event)  # emit -> insert_alert + alerts.ndjson
                 if row["queue"] == "endpoint":
                     conn.execute(
                         "UPDATE endpoint_records SET detect_state='done',claimed_at=NULL "
+                        "WHERE agent_id=? AND record_id=?",
+                        (row["agent_id"], event_id),
+                    )
+                elif row["queue"] == "linux":
+                    conn.execute(
+                        "UPDATE linux_endpoint_detection SET state='done',claimed_at=NULL "
                         "WHERE agent_id=? AND record_id=?",
                         (row["agent_id"], event_id),
                     )
@@ -226,6 +274,11 @@ class DetectionWorker:
     @staticmethod
     def _normalize(raw_json: str) -> dict:
         raw = json.loads(raw_json)
+        if isinstance(raw, dict) and raw.get("record_type") and raw.get("schema_version") == "1.0":
+            event = to_engine_event(raw)
+            if event is None:
+                raise ValueError("Linux record is not a detectable process event")
+            return event
         if EndpointIngestionAdapter.is_endpoint_record(raw):
             return EndpointIngestionAdapter.transform(raw)
         if (
@@ -250,6 +303,12 @@ class DetectionWorker:
                 conn.execute(
                     "UPDATE endpoint_records SET detect_state='failed',claimed_at=NULL, "
                     "detect_attempts=detect_attempts+1 WHERE agent_id=? AND record_id=?",
+                    (agent_id, event_id),
+                )
+            elif queue == "linux":
+                conn.execute(
+                    "UPDATE linux_endpoint_detection SET state='failed',claimed_at=NULL, "
+                    "attempts=attempts+1 WHERE agent_id=? AND record_id=?",
                     (agent_id, event_id),
                 )
             else:
