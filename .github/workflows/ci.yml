@@ -38,6 +38,13 @@ jobs:
       - name: Move panopticon-contracts to sibling path
         run: mv _panopticon-contracts-checkout ../panopticon-contracts
 
+      - name: Checkout Console response release for cross-repository HTTP qualification
+        uses: actions/checkout@v4
+        with:
+          repository: Panopticon-Co/panopticon-console
+          ref: 844fe218f2c91807438f2db65509ee488469f002
+          path: _response-console-checkout
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
@@ -55,3 +62,6 @@ jobs:
       - name: Run test suite
         run: |
           pytest -v tests/
+
+      - name: Verify real Console to Manager response HTTP workflow
+        run: python tools/verify_response_console.py --console-dir _response-console-checkout
