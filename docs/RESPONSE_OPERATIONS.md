@@ -45,6 +45,20 @@ to the configured analyst identity; deploy separate sessions for separate analys
 
 ## E2E acceptance
 
+Run the automated local HTTP qualification with Manager's dependencies installed:
+
+```powershell
+.venv/Scripts/python.exe tools/verify_response_console.py
+```
+
+It starts isolated loopback Manager and Console servers on unused ports, creates
+a temporary lab database, enrolls synthetic identities, then verifies catalog,
+request, approval, cancellation, polling, simulated receipt and evidence display
+over actual HTTP. `--console-dir PATH` selects a different Console checkout;
+`--serve` keeps the lab running for browser inspection until interrupted. It does
+not connect to existing enrolled agents or execute native actions. CI runs this
+workflow against a pinned Console revision on all three supported Python versions.
+
 1. Start Manager using a **test database** and enroll test Windows/Linux agents
    and an analyst using the existing enrollment mechanism. Run the Console with
    `--manager-url` and server-side `PANOPTICON_MANAGER_TOKEN`.
