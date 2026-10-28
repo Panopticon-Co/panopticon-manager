@@ -304,7 +304,8 @@ def authorize_response_action(conn: sqlite3.Connection, response_id: str, actor:
     command creation is rejected -- callers decide how to surface that.
     """
     row = conn.execute(
-        "SELECT alert_id, action, target_json FROM response_actions "
+        "SELECT alert_id, action, target_json, origin, requested_agent_id, requested_host_id "
+        "FROM response_actions "
         "WHERE response_id = ? AND lifecycle_state = 'PENDING'",
         (response_id,),
     ).fetchone()
@@ -322,7 +323,17 @@ def authorize_response_action(conn: sqlite3.Connection, response_id: str, actor:
         return
     command_id = f"resp-{response_id}"
     target = json.loads(row["target_json"])
-    if "boot_id" in target:
+    if row["origin"] == "analyst":
+        from manager.analyst_response import resolve_manual_target
+
+        agent_id, host_id, verified = resolve_manual_target(
+            conn, row["alert_id"], row["action"], target
+        )
+        if (agent_id, host_id, verified) != (
+            row["requested_agent_id"], row["requested_host_id"], target
+        ):
+            raise HTTPException(409, "manual response endpoint binding changed")
+    elif "boot_id" in target:
         stored_alert = json.loads(alert["alert_json"])
         context = stored_alert.get("endpoint_context")
         recommendation = stored_alert.get("active_response") or {}

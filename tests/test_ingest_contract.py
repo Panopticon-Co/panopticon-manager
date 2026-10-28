@@ -16,10 +16,15 @@ from pydantic import ValidationError
 from manager.wire.telemetry import TelemetryEvent
 
 _WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
-_SCHEMA_PATH = _WORKSPACE_ROOT / "panopticon-agent" / "schema" / "event.schema.json"
+_SCHEMA_PATH = _WORKSPACE_ROOT / "panopticon-contracts/schema/telemetry-event-0.4.schema.json"
 _SAMPLES_DIR = Path(__file__).resolve().parents[1] / "vendor" / "eyedetect" / "samples"
 
 _SCHEMA = json.loads(_SCHEMA_PATH.read_text())
+
+
+def test_agent_legacy_schema_mirror_matches_central_contract():
+    mirror = _WORKSPACE_ROOT / "panopticon-agent/schema/event.schema.json"
+    assert json.loads(mirror.read_text()) == _SCHEMA
 
 
 def _sample_events() -> list[dict]:

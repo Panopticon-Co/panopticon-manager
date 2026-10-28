@@ -438,6 +438,13 @@ def _migration_18(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _migration_19(conn: sqlite3.Connection) -> None:
+    """Retain manual response provenance independently of the approving actor."""
+    conn.execute("ALTER TABLE response_actions ADD COLUMN origin TEXT NOT NULL DEFAULT 'detection'")
+    for column in ("requested_by", "request_reason", "requested_agent_id", "requested_host_id"):
+        conn.execute(f"ALTER TABLE response_actions ADD COLUMN {column} TEXT")
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -457,6 +464,7 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_16,
     _migration_17,
     _migration_18,
+    _migration_19,
 ]
 
 
