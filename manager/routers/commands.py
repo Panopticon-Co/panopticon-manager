@@ -161,7 +161,7 @@ async def poll(
         eligibility = (
             "lifecycle_state IN ('AUTHORIZED','DISPATCHED')"
             if delivery_mode == "durable"
-            else "delivered_at IS NULL"
+            else "delivered_at IS NULL AND lifecycle_state = 'AUTHORIZED'"
         )
         rows = conn.execute(
             "SELECT command_id, command_json FROM commands WHERE agent_id = ? "
