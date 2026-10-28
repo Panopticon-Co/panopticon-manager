@@ -103,6 +103,11 @@ def main():
     parser.add_argument("--serve", action="store_true")
     parser.add_argument("--governance", action="store_true")
     parser.add_argument("--console-port", type=int, default=0)
+    parser.add_argument(
+        "--preview-only",
+        action="store_true",
+        help="Serve synthetic Console data without workflow qualification",
+    )
     args = parser.parse_args()
     lab = Path(tempfile.mkdtemp(prefix="panopticon-response-lab-"))
     bootstrap, analyst_bootstrap = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
@@ -171,6 +176,10 @@ def main():
             )
             threading.Thread(target=console.serve_forever, daemon=True).start()
             console_url = f"http://127.0.0.1:{console.server_address[1]}"
+            if args.preview_only:
+                print("PREVIEW ONLY: synthetic data; no response workflow/E2E run.", flush=True)
+                print("CONSOLE_URL=" + console_url, flush=True)
+                threading.Event().wait()
             with httpx.Client(base_url=console_url, timeout=10) as browser:
                 catalog = browser.get("/api/response-actions/catalog")
                 assert len(catalog.json()["actions"]) == 7

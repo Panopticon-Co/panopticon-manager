@@ -24,8 +24,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from response_engine.access import AnalystRole
 from response_engine.catalog import action_catalog
 from response_engine.contract import Action
+from response_engine.policy import MAX_CAMPAIGN_ACTIONS
 
-from manager import db
+from manager import command_signing, db
 from manager.analyst_response import resolve_manual_target
 from manager.auth import (
     analyst_access,
@@ -41,6 +42,7 @@ from manager.detection.response import (
     reject_response_action,
 )
 from manager.response_audit import record_decision
+from manager.response_readiness import channel_readiness, response_preflight
 from manager.routers.commands import _audit, _expire_stale_commands
 from manager.timeutil import iso_now
 
@@ -104,6 +106,19 @@ class ManualRequest(RejectRequest):
     def provided_id_is_not_null(cls, value):
         if value is None:
             raise ValueError("request_id must be omitted or a nonempty string")
+        return value
+
+
+class CampaignRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    campaign_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    items: list[ManualRequest] = Field(min_length=1, max_length=MAX_CAMPAIGN_ACTIONS)
+
+    @field_validator("items")
+    @classmethod
+    def server_owns_item_retry_identity(cls, value):
+        if any(item.request_id is not None for item in value):
+            raise ValueError("campaign items must omit individual request_id")
         return value
 
 
@@ -293,7 +308,93 @@ async def catalog(authorization: str | None = Header(default=None)) -> dict:
     return {
         "actions": [item.model_dump(mode="json") for item in action_catalog()],
         "analyst": {**access, "separate_approver_required": separate_approver()},
+        "command_authority": command_signing.readiness(),
+        "max_campaign_actions": MAX_CAMPAIGN_ACTIONS,
+        "preflight_supported": True,
     }
+
+
+@router.get("/api/v1/agents/{agent_id}/response-readiness")
+async def readiness(agent_id: str, authorization: str | None = Header(None)):
+    require_analyst_token(authorization)
+    return channel_readiness(db.connect(), agent_id)
+
+
+@router.get("/api/v1/response-actions/{response_id}/preflight")
+async def preflight(response_id: str, authorization: str | None = Header(None)):
+    access = analyst_access(authorization)
+    conn = db.connect()
+    expire_pending(conn)
+    row = conn.execute(
+        "SELECT * FROM response_actions WHERE response_id=?", (response_id,)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, "no response action with that id")
+    return response_preflight(conn, row, access, separate_approver())
+
+
+def stage_manual_request(conn, request, actor):
+    """Stage inside the caller transaction; no commits so campaigns can isolate items."""
+    digest = hashlib.sha256(
+        json.dumps(
+            request.model_dump(exclude={"request_id"}), sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+    if request.request_id is not None:
+        prior = conn.execute(
+            "SELECT k.payload_digest,ra.response_id,ra.lifecycle_state,ra.target_json "
+            "FROM response_request_keys k JOIN response_actions ra "
+            "ON ra.response_id=k.response_id WHERE k.analyst_id=? AND k.request_id=?",
+            (actor, request.request_id),
+        ).fetchone()
+        if prior is not None:
+            if prior["payload_digest"] != digest:
+                raise HTTPException(409, "request_id is already bound to a different request")
+            return {
+                "response_id": prior["response_id"],
+                "lifecycle_state": prior["lifecycle_state"],
+                "target": json.loads(prior["target_json"]),
+                "replayed": True,
+            }
+    expire_stale_response_actions(conn)
+    _expire_stale_commands(conn, datetime.now(timezone.utc).isoformat())
+    agent, host, target = resolve_manual_target(
+        conn, request.alert_id, request.action, request.target
+    )
+    # Match the enrolled host even for older alerts without a denormalized host_id.
+    duplicate = conn.execute(
+        "SELECT ra.target_json FROM response_actions ra "
+        "JOIN alerts a ON a.alert_id=ra.alert_id "
+        "LEFT JOIN commands c ON c.command_id=ra.command_id WHERE a.agent_id=? AND ra.action=? "
+        "AND (ra.lifecycle_state='PENDING' OR (ra.lifecycle_state='AUTHORIZED' "
+        "AND c.lifecycle_state IN ('AUTHORIZED','DISPATCHED','ACCEPTED')))",
+        (agent, request.action),
+    ).fetchall()
+    if find_open_duplicate(conn, host, request.action, target) or any(
+        json.loads(r["target_json"]) == target for r in duplicate
+    ):
+        raise HTTPException(409, "an equivalent response is already pending or in flight")
+    response_id = _insert_response_action(
+        conn,
+        alert_id=request.alert_id,
+        action=request.action,
+        tier="ANALYST_APPROVAL",
+        state="PENDING",
+        target=target,
+        reason=request.reason,
+        actor=actor,
+    )
+    conn.execute(
+        "UPDATE response_actions SET origin='analyst',requested_by=?,request_reason=?,"
+        "requested_agent_id=?,requested_host_id=? WHERE response_id=?",
+        (actor, request.reason, agent, host, response_id),
+    )
+    if request.request_id is not None:
+        conn.execute(
+            "INSERT INTO response_request_keys VALUES (?,?,?,?)",
+            (actor, request.request_id, digest, response_id),
+        )
+    return {"response_id": response_id, "lifecycle_state": "PENDING", "target": target}
 
 
 @router.post("/api/v1/response-actions", status_code=201)
@@ -302,71 +403,90 @@ async def create_manual(request: ManualRequest, authorization: str | None = Head
     conn = db.connect()
     conn.execute("BEGIN IMMEDIATE")
     try:
-        digest = hashlib.sha256(
-            json.dumps(
-                request.model_dump(exclude={"request_id"}), sort_keys=True, separators=(",", ":")
-            ).encode()
-        ).hexdigest()
-        if request.request_id is not None:
-            prior = conn.execute(
-                "SELECT k.payload_digest,ra.response_id,ra.lifecycle_state,ra.target_json "
-                "FROM response_request_keys k JOIN response_actions ra "
-                "ON ra.response_id=k.response_id WHERE k.analyst_id=? AND k.request_id=?",
-                (actor, request.request_id),
-            ).fetchone()
-            if prior is not None:
-                if prior["payload_digest"] != digest:
-                    raise HTTPException(409, "request_id is already bound to a different request")
-                conn.commit()
-                return {
-                    "response_id": prior["response_id"],
-                    "lifecycle_state": prior["lifecycle_state"],
-                    "target": json.loads(prior["target_json"]),
-                    "replayed": True,
-                }
-        expire_stale_response_actions(conn)
-        _expire_stale_commands(conn, datetime.now(timezone.utc).isoformat())
-        agent, host, target = resolve_manual_target(
-            conn, request.alert_id, request.action, request.target
-        )
-        # Match the enrolled host even for older alerts without a denormalized host_id.
-        duplicate = conn.execute(
-            "SELECT ra.target_json FROM response_actions ra "
-            "JOIN alerts a ON a.alert_id=ra.alert_id "
-            "LEFT JOIN commands c ON c.command_id=ra.command_id WHERE a.agent_id=? AND ra.action=? "
-            "AND (ra.lifecycle_state='PENDING' OR (ra.lifecycle_state='AUTHORIZED' "
-            "AND c.lifecycle_state IN ('AUTHORIZED','DISPATCHED','ACCEPTED')))",
-            (agent, request.action),
-        ).fetchall()
-        if find_open_duplicate(conn, host, request.action, target) or any(
-            json.loads(r["target_json"]) == target for r in duplicate
-        ):
-            raise HTTPException(409, "an equivalent response is already pending or in flight")
-        response_id = _insert_response_action(
-            conn,
-            alert_id=request.alert_id,
-            action=request.action,
-            tier="ANALYST_APPROVAL",
-            state="PENDING",
-            target=target,
-            reason=request.reason,
-            actor=actor,
-        )
-        conn.execute(
-            "UPDATE response_actions SET origin='analyst',requested_by=?,request_reason=?,"
-            "requested_agent_id=?,requested_host_id=? WHERE response_id=?",
-            (actor, request.reason, agent, host, response_id),
-        )
-        if request.request_id is not None:
-            conn.execute(
-                "INSERT INTO response_request_keys VALUES (?,?,?,?)",
-                (actor, request.request_id, digest, response_id),
-            )
+        result = stage_manual_request(conn, request, actor)
         conn.commit()
     except Exception:
         conn.rollback()
         raise
-    return {"response_id": response_id, "lifecycle_state": "PENDING", "target": target}
+    return result
+
+
+@router.post("/api/v1/response-campaigns", status_code=201)
+async def create_campaign(request: CampaignRequest, authorization: str | None = Header(None)):
+    actor = "analyst:" + require_analyst_permission(authorization, "response:request")
+    conn = db.connect()
+    digest = hashlib.sha256(json.dumps(request.model_dump(), sort_keys=True).encode()).hexdigest()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        prior = conn.execute(
+            "SELECT payload_digest,result_json FROM response_campaigns "
+            "WHERE actor=? AND campaign_id=?",
+            (actor, request.campaign_id),
+        ).fetchone()
+        if prior is not None:
+            if prior["payload_digest"] != digest:
+                raise HTTPException(409, "campaign_id is already bound to a different campaign")
+            conn.commit()
+            return {**json.loads(prior["result_json"]), "replayed": True}
+        items = []
+        prefix = "campaign:" + hashlib.sha256(request.campaign_id.encode()).hexdigest()
+        for index, item in enumerate(request.items):
+            conn.execute("SAVEPOINT campaign_item")
+            record = {"index": index, "alert_id": item.alert_id, "action": item.action}
+            try:
+                result = stage_manual_request(
+                    conn, item.model_copy(update={"request_id": f"{prefix}:{index}"}), actor
+                )
+                if not result.get("replayed"):
+                    record_decision(
+                        conn,
+                        result["response_id"],
+                        "campaign_linked",
+                        actor,
+                        {"campaign_id": request.campaign_id, "index": index},
+                    )
+                record.update(result, status_code=201)
+            except HTTPException as exc:
+                conn.execute("ROLLBACK TO campaign_item")
+                record.update(status_code=exc.status_code, error=exc.detail)
+            finally:
+                conn.execute("RELEASE campaign_item")
+            items.append(record)
+        report = {
+            "campaign_id": request.campaign_id,
+            "actor": actor,
+            "created_at": iso_now(),
+            "items": items,
+            "created_count": sum(i["status_code"] == 201 for i in items),
+            "failed_count": sum(i["status_code"] != 201 for i in items),
+            "replayed": False,
+        }
+        conn.execute(
+            "INSERT INTO response_campaigns VALUES (?,?,?,?,?)",
+            (actor, request.campaign_id, digest, json.dumps(report), report["created_at"]),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return report
+
+
+@router.get("/api/v1/response-campaigns")
+async def list_campaigns(
+    authorization: str | None = Header(None), limit: int = Query(default=20, ge=1, le=50)
+):
+    actor = "analyst:" + require_analyst_token(authorization)
+    rows = (
+        db.connect()
+        .execute(
+            "SELECT result_json FROM response_campaigns WHERE actor=? "
+            "ORDER BY created_at DESC,campaign_id DESC LIMIT ?",
+            (actor, limit),
+        )
+        .fetchall()
+    )
+    return {"campaigns": [json.loads(r["result_json"]) for r in rows]}
 
 
 @router.post("/api/v1/response-actions/{response_id}/cancel")

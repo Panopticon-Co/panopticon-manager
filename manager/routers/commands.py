@@ -21,7 +21,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Header, HTTPException
 from response_engine.contract import Action, Command, CommandResult
 
-from manager import db
+from manager import command_signing, db
 from manager.auth import require_agent_token
 from manager.timeutil import iso_now
 
@@ -67,26 +67,43 @@ def authorize_and_enqueue(
     """
     if command.expires_at <= datetime.now(command.expires_at.tzinfo):
         raise HTTPException(status_code=422, detail="command expired")
-    enrolled = conn.execute(
-        "SELECT host_id FROM enrolled_agents WHERE agent_id = ? AND revoked_at IS NULL",
-        (command.agent_id,),
-    ).fetchone()
-    if enrolled is None:
-        raise HTTPException(status_code=422, detail="target agent is not enrolled")
-    payload = command.model_dump(mode="json")
-    if command.schema_version == "2":
-        payload["expires_at"] = command.expires_at.astimezone(timezone.utc).isoformat()
-    payload.update(
-        {
-            "schema_version": command.schema_version,
-            "host_id": str(enrolled["host_id"]),
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-    )
     owns_transaction = not conn.in_transaction
     if owns_transaction:
         conn.execute("BEGIN IMMEDIATE")
     try:
+        enrolled = conn.execute(
+            "SELECT host_id FROM enrolled_agents WHERE agent_id = ? AND revoked_at IS NULL",
+            (command.agent_id,),
+        ).fetchone()
+        if enrolled is None:
+            raise HTTPException(status_code=422, detail="target agent is not enrolled")
+        payload = command.model_dump(mode="json")
+        if command.schema_version == "2":
+            payload["expires_at"] = command.expires_at.astimezone(timezone.utc).isoformat()
+        payload.update(
+            {
+                "schema_version": command.schema_version,
+                "host_id": str(enrolled["host_id"]),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        audit_detail = None
+        try:
+            signer = command_signing.signer()
+            if signer is not None:
+                payload["authorization"] = signer.authorization(payload)
+                audit_detail = f"signed ES256 key_id={signer.key_id}"
+            elif conn.execute(
+                "SELECT 1 FROM agent_response_channels WHERE agent_id=? AND command_auth='ES256'",
+                (command.agent_id,),
+            ).fetchone():
+                raise HTTPException(
+                    503, "endpoint requires signing; configure command authority first"
+                )
+        except command_signing.SigningUnavailable as exc:
+            raise HTTPException(503, "command signing is configured but unavailable") from exc
+        except command_signing.UnsignableCommand as exc:
+            raise HTTPException(422, f"command cannot be signed: {exc}") from exc
         conn.execute(
             "INSERT INTO commands (command_id, agent_id, command_json, created_at, "
             "expires_at, alert_id, lifecycle_state) VALUES (?, ?, ?, ?, ?, ?, 'AUTHORIZED')",
@@ -99,7 +116,7 @@ def authorize_and_enqueue(
                 alert_id,
             ),
         )
-        _audit(conn, command.command_id, "created", actor)
+        _audit(conn, command.command_id, "created", actor, audit_detail)
         if owns_transaction:
             conn.commit()
     except sqlite3.IntegrityError:
@@ -151,6 +168,7 @@ async def poll(
     agent_id: str,
     authorization: str | None = Header(default=None),
     delivery_mode: Literal["single", "durable"] = "single",
+    command_auth: Literal["ES256"] | None = None,
 ) -> dict:
     require_agent_token(agent_id, authorization)
     conn = db.connect()
@@ -158,6 +176,15 @@ async def poll(
     conn.execute("BEGIN IMMEDIATE")
     try:
         _expire_stale_commands(conn, now)
+        conn.execute(
+            "INSERT INTO agent_response_channels "
+            "(agent_id,last_polled_at,delivery_mode,command_auth) "
+            "VALUES (?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET "
+            "last_polled_at=excluded.last_polled_at,"
+            "delivery_mode=excluded.delivery_mode,"
+            "command_auth=COALESCE(excluded.command_auth,agent_response_channels.command_auth)",
+            (agent_id, now, delivery_mode, command_auth),
+        )
         eligibility = (
             "lifecycle_state IN ('AUTHORIZED','DISPATCHED')"
             if delivery_mode == "durable"
@@ -168,6 +195,13 @@ async def poll(
             f"AND {eligibility} AND expires_at > ? ORDER BY created_at LIMIT 32",
             (agent_id, now),
         ).fetchall()
+        queued_commands = [json.loads(str(row["command_json"])) for row in rows]
+        if command_auth == "ES256" and any("authorization" not in c for c in queued_commands):
+            # Preserve the authenticated channel observation without claiming dispatch.
+            conn.commit()
+            raise HTTPException(
+                409, "queued unsigned commands require cancellation and new approval"
+            )
         for row in rows:
             conn.execute(
                 "UPDATE commands SET delivered_at = COALESCE(delivered_at,?), "
@@ -180,7 +214,10 @@ async def poll(
     except Exception:
         conn.rollback()
         raise
-    return {"commands": [json.loads(str(row["command_json"])) for row in rows]}
+    if command_auth is None:
+        for queued in queued_commands:
+            queued.pop("authorization", None)
+    return {"commands": queued_commands}
 
 
 @router.post("/api/v1/agents/{agent_id}/commands/{command_id}/accept")

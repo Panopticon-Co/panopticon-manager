@@ -465,6 +465,18 @@ def _migration_20(conn: sqlite3.Connection) -> None:
             BEGIN SELECT RAISE(ABORT, 'response decision audit is append-only'); END""")
 
 
+def _migration_21(conn: sqlite3.Connection) -> None:
+    """Authenticated response channel observations; never infer endpoint capabilities."""
+    conn.execute("""CREATE TABLE agent_response_channels (
+        agent_id TEXT PRIMARY KEY REFERENCES enrolled_agents(agent_id),
+        last_polled_at TEXT NOT NULL, delivery_mode TEXT NOT NULL, command_auth TEXT
+    )""")
+    conn.execute("""CREATE TABLE response_campaigns (
+        actor TEXT NOT NULL, campaign_id TEXT NOT NULL, payload_digest TEXT NOT NULL,
+        result_json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(actor,campaign_id)
+    )""")
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -486,6 +498,7 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_18,
     _migration_19,
     _migration_20,
+    _migration_21,
 ]
 
 
