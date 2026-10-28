@@ -25,10 +25,84 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
+def verify_governance(manager, browser, console_module, manager_url, bootstrap, case_id):
+    """Exercise policy and evidence through real HTTP without native execution."""
+    assert browser.get("/api/analysts/me").json()["role"] == "analyst"
+    request = {
+        "alert_id": "LAB-RESPONSE-1",
+        "action": "COLLECT_NETWORK_CONNECTIONS",
+        "reason": "Retry-safe governance qualification",
+        "request_id": "lab-retry-1",
+    }
+    first = browser.post("/api/response-actions", json=request)
+    assert first.status_code == 201, first.text
+    rid = first.json()["response_id"]
+    replay = browser.post("/api/response-actions", json=request)
+    assert replay.json()["response_id"] == rid and replay.json()["replayed"]
+    assert (
+        browser.post(
+            "/api/response-actions", json={**request, "reason": "Different intent"}
+        ).status_code
+        == 409
+    )
+    os.environ["PANOPTICON_REQUIRE_SEPARATE_APPROVER"] = "true"
+    try:
+        assert browser.post(f"/api/response-actions/{rid}/authorize").status_code == 403
+        approver = manager.post(
+            "/api/v1/analysts/enroll",
+            json={"analyst_id": "lab-approver", "role": "approver"},
+            headers={"X-Panopticon-Analyst-Enrollment-Token": bootstrap},
+        )
+        assert approver.status_code == 200
+        assert manager.post(
+            f"/api/v1/response-actions/{rid}/authorize",
+            headers={"Authorization": "Bearer " + approver.json()["access_token"]},
+        ).json()["authorized"]
+    finally:
+        os.environ["PANOPTICON_REQUIRE_SEPARATE_APPROVER"] = "false"
+    response = browser.get("/api/response-actions?command_state=INDETERMINATE")
+    assert len(response.json()["response_actions"]) == 1
+    exported = browser.get(f"/api/response-actions/{case_id}/export")
+    assert exported.status_code == 200
+    assert "attachment" in exported.headers["content-disposition"]
+    assert exported.json()["originating_alert"]["alert_id"] == "LAB-RESPONSE-1"
+    assert exported.json()["response_action"]["decision_audit"]
+    viewer = manager.post(
+        "/api/v1/analysts/enroll",
+        json={"analyst_id": "lab-viewer", "role": "viewer"},
+        headers={"X-Panopticon-Analyst-Enrollment-Token": bootstrap},
+    )
+    assert viewer.status_code == 200
+    token = viewer.json()["access_token"]
+    viewer_console = console_module.build_server(None, "127.0.0.1", 0, manager_url, token)
+    thread = threading.Thread(target=viewer_console.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with httpx.Client(
+            base_url=f"http://127.0.0.1:{viewer_console.server_address[1]}"
+        ) as reader:
+            assert (
+                reader.get("/api/response-actions/catalog").json()["analyst"]["permissions"] == []
+            )
+            assert reader.post("/api/response-actions", json=request).status_code == 403
+            result = reader.get(f"/api/response-actions/{case_id}/export")
+            assert result.status_code == 200 and token not in result.text
+    finally:
+        viewer_console.shutdown()
+        viewer_console.server_close()
+        thread.join(timeout=5)
+    print(
+        "PASS: HTTP roles/separate-approval/retry-conflicts/outcome-filter/decision-export",
+        flush=True,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--console-dir", type=Path, default=ROOT.parent / "panopticon-console")
     parser.add_argument("--serve", action="store_true")
+    parser.add_argument("--governance", action="store_true")
+    parser.add_argument("--console-port", type=int, default=0)
     args = parser.parse_args()
     lab = Path(tempfile.mkdtemp(prefix="panopticon-response-lab-"))
     bootstrap, analyst_bootstrap = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
@@ -38,6 +112,7 @@ def main():
         PANOPTICON_RULES_DIR=str(ROOT / "tests/fixtures/rules"),
         PANOPTICON_ENROLLMENT_TOKEN=bootstrap,
         PANOPTICON_ANALYST_ENROLLMENT_TOKEN=analyst_bootstrap,
+        PANOPTICON_REQUIRE_SEPARATE_APPROVER="false",
     )
     # Bind Manager tests before vendor_path prepends eyedetect (which also has tests/).
     from tests.conftest import enroll_test_agent  # isort: skip
@@ -91,7 +166,9 @@ def main():
             conn.execute("UPDATE alerts SET host_id='host-1',alert_json=?", (json.dumps(alert),))
             conn.execute("UPDATE response_actions SET lifecycle_state='REJECTED'")
             conn.commit()
-            console = console_module.build_server(None, "127.0.0.1", 0, manager_url, analyst_token)
+            console = console_module.build_server(
+                None, "127.0.0.1", args.console_port, manager_url, analyst_token
+            )
             threading.Thread(target=console.serve_forever, daemon=True).start()
             console_url = f"http://127.0.0.1:{console.server_address[1]}"
             with httpx.Client(base_url=console_url, timeout=10) as browser:
@@ -160,6 +237,10 @@ def main():
                 assert any(r["receipts"] for r in rows)
                 assert analyst_token not in response.text
                 assert browser.get("/").status_code == 200
+                if args.governance:
+                    verify_governance(
+                        manager, browser, console_module, manager_url, analyst_bootstrap, rid
+                    )
             print(
                 "PASS: real HTTP Console -> Manager "
                 "catalog/create/approve/cancel/poll/result/evidence",

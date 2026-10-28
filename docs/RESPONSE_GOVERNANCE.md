@@ -56,3 +56,10 @@ Validation includes role denial, separate-approver policy, retry conflicts after
 decisions, immutable audit, bounded queue/full export, contract parity and the
 real HTTP Console/Manager smoke. Receipts in automated smoke are simulated;
 privileged Windows/Linux execution still requires the endpoint E2E runbook.
+
+Run `.venv/Scripts/python.exe tools/verify_response_console.py --governance`
+against a sibling governance Console checkout to qualify the full flow over real
+loopback HTTP. `--serve --console-port 8787` keeps an isolated synthetic lab open
+on a stable local address for browser inspection. These flags do not connect to
+real enrolled endpoints or execute native actions. The standard smoke mode remains
+available for older compatible Console revisions.
