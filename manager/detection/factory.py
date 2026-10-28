@@ -22,6 +22,9 @@ worker binds the current event's agent id onto the sink before each
 
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -49,8 +52,32 @@ class AlertSink:
         self._conn = conn
         self._writer = writer
         self.agent_id: str | None = None
+        self.linux_context: dict | None = None
 
     def emit(self, alert: Any) -> None:
+        if (
+            self.linux_context is not None
+            and alert.event_id == self.linux_context["record_id"]
+            and alert.detection_source != "correlation"
+        ):
+            alert.endpoint_context = copy.deepcopy(self.linux_context)
+            material = [
+                "linux_endpoint_v1",
+                self.agent_id,
+                alert.event_id,
+                alert.rule_id,
+                alert.evidence,
+            ]
+            encoded = json.dumps(material, sort_keys=True, separators=(",", ":"), default=str)
+            alert.alert_id = "ALT-" + hashlib.sha256(encoded.encode()).hexdigest().upper()
+        elif self.linux_context is not None:
+            # Aggregate alerts must not inherit the triggering process's identity
+            # or silently downgrade to a legacy PID-only recommendation.
+            alert.endpoint_context = {
+                "identity_model": "linux_endpoint_v1",
+                "endpoint": {},
+                "subject": {},
+            }
         inserted = insert_alert(self._conn, alert, agent_id=self.agent_id)
         # Always folded, not only on a fresh insert: upsert_incident is itself
         # idempotent (revision only moves forward, links are INSERT OR
