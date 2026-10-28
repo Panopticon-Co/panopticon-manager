@@ -208,7 +208,7 @@ def require_agent_token(agent_id: str, authorization: str | None) -> None:
         raise HTTPException(status_code=401, detail="agent authentication required")
 
 
-def enroll_analyst(analyst_id: str, bootstrap_token: str) -> str:
+def enroll_analyst(analyst_id: str, bootstrap_token: str, role: str = "analyst") -> str:
     """Same bootstrap-secret-gated pattern as enroll(), for a distinct
     identity space (analyst_credentials, not enrolled_agents) so an
     analyst's authorization actions in command_audit carry a real
@@ -216,14 +216,18 @@ def enroll_analyst(analyst_id: str, bootstrap_token: str) -> str:
     expected = os.environ.get("PANOPTICON_ANALYST_ENROLLMENT_TOKEN")
     if not expected or not hmac.compare_digest(bootstrap_token, expected):
         raise HTTPException(status_code=401, detail="invalid analyst enrollment credential")
+    from response_engine.access import AnalystRole
+
+    if role not in {item.value for item in AnalystRole}:
+        raise HTTPException(422, "invalid analyst role")
     token = secrets.token_urlsafe(32)
     conn = db.connect()
     conn.execute("BEGIN IMMEDIATE")
     try:
         conn.execute(
             "INSERT OR REPLACE INTO analyst_credentials "
-            "(analyst_id, token_digest, created_at, revoked_at) VALUES (?, ?, ?, NULL)",
-            (analyst_id, _digest(token), iso_now()),
+            "(analyst_id, token_digest, created_at, revoked_at, role) VALUES (?, ?, ?, NULL, ?)",
+            (analyst_id, _digest(token), iso_now(), role),
         )
         conn.commit()
     except Exception:
@@ -240,11 +244,43 @@ def require_analyst_token(authorization: str | None) -> str:
     token = authorization.removeprefix("Bearer ")
     if not token or len(token) > 512:
         raise HTTPException(status_code=401, detail="analyst authentication required")
-    rows = db.connect().execute(
-        "SELECT analyst_id, token_digest FROM analyst_credentials WHERE revoked_at IS NULL"
-    ).fetchall()
+    rows = (
+        db.connect()
+        .execute(
+            "SELECT analyst_id, token_digest FROM analyst_credentials WHERE revoked_at IS NULL"
+        )
+        .fetchall()
+    )
     digest = _digest(token)
     for row in rows:
         if hmac.compare_digest(str(row["token_digest"]), digest):
             return str(row["analyst_id"])
     raise HTTPException(status_code=401, detail="analyst authentication required")
+
+
+def analyst_access(authorization: str | None) -> dict:
+    from response_engine.access import permissions_for
+
+    analyst_id = require_analyst_token(authorization)
+    row = (
+        db.connect()
+        .execute(
+            "SELECT role FROM analyst_credentials WHERE analyst_id=? AND revoked_at IS NULL",
+            (analyst_id,),
+        )
+        .fetchone()
+    )
+    if row is None:
+        raise HTTPException(401, "analyst authentication required")
+    return {
+        "analyst_id": analyst_id,
+        "role": row["role"],
+        "permissions": sorted(p.value for p in permissions_for(row["role"])),
+    }
+
+
+def require_analyst_permission(authorization: str | None, permission: str) -> str:
+    access = analyst_access(authorization)
+    if permission not in access["permissions"]:
+        raise HTTPException(403, "analyst role does not permit " + permission)
+    return access["analyst_id"]

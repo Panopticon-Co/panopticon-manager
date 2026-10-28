@@ -15,7 +15,7 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from manager import db
-from manager.auth import require_analyst_token
+from manager.auth import require_analyst_permission, require_analyst_token
 from manager.detection.store import set_incident_status
 from manager.routers.alerts import ALERT_COLUMNS, alert_row_to_dict
 from manager.routers.response_actions import response_actions_for_alerts
@@ -124,7 +124,7 @@ async def get_incident(incident_id: str, authorization: str | None = Header(defa
 async def update_status(
     incident_id: str, request: StatusRequest, authorization: str | None = Header(default=None)
 ) -> dict:
-    analyst_id = require_analyst_token(authorization)
+    analyst_id = require_analyst_permission(authorization, "incident:write")
     conn = db.connect()
     conn.execute("BEGIN IMMEDIATE")
     try:

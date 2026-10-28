@@ -20,6 +20,8 @@ def resolve_manual_target(conn, alert_id, action, target):
     if row is None:
         raise HTTPException(422, "alert must belong to an actively enrolled endpoint")
     record = json.loads(row["alert_json"])
+    if not isinstance(record, dict):
+        raise HTTPException(422, "invalid retained alert context")
     context = record.get("endpoint_context")
     if row["host_id"] is not None and row["host_id"] != row["enrolled_host"]:
         raise HTTPException(409, "alert and enrolled host binding disagree")
@@ -33,9 +35,13 @@ def resolve_manual_target(conn, alert_id, action, target):
         ):
             raise HTTPException(409, "canonical endpoint binding disagrees with enrollment")
     if action in {"KILL_PROCESS", "COLLECT_PROCESS_INFO"}:
-        recommendation = dict(record.get("active_response") or {})
+        recommendation = record.get("active_response") or {}
+        if not isinstance(recommendation, dict):
+            raise HTTPException(422, "invalid retained process recommendation")
         if context is not None:
             subject = context.get("subject", {}) if isinstance(context, dict) else {}
+            if not isinstance(subject, dict):
+                raise HTTPException(422, "invalid retained process subject")
             ticks = subject.get("native_creation_ticks")
             recommendation = {
                 "target_pid": subject.get("observed_pid"),

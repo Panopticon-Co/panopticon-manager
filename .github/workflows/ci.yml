@@ -32,7 +32,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Panopticon-Co/panopticon-contracts
-          ref: df8b2b2692cbcc32088ad5f1f11233d3390ad5af
+          ref: 907fc3f912546758f34345ccdae720546f9d1d55
           path: _panopticon-contracts-checkout
 
       - name: Move panopticon-contracts to sibling path
