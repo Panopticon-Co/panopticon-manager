@@ -42,7 +42,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Panopticon-Co/panopticon-console
-          ref: 844fe218f2c91807438f2db65509ee488469f002
+          ref: 8bee7d1f2c520c209385071fa690abeec320d104
           path: _response-console-checkout
 
       - name: Move Console to sibling path (separate repository lint policy)
@@ -67,4 +67,4 @@ jobs:
           pytest -v tests/
 
       - name: Verify real Console to Manager response HTTP workflow
-        run: python tools/verify_response_console.py --console-dir ../panopticon-console
+        run: python tools/verify_response_console.py --governance --console-dir ../panopticon-console
