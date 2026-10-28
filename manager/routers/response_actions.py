@@ -468,10 +468,20 @@ async def export_response(response_id: str, authorization: str | None = Header(N
         if not rows:
             raise HTTPException(404, "no response action with that id")
         record = _with_command_audit(conn, rows, full_history=True)[0]
+        originating_alert = json.loads(
+            conn.execute(
+                "SELECT alert_json FROM alerts WHERE alert_id=?", (record["alert_id"],)
+            ).fetchone()["alert_json"]
+        )
         conn.commit()
     except Exception:
         conn.rollback()
         raise
     return JSONResponse(
-        {"schema_version": "1", "exported_at": iso_now(), "response_action": record}
+        {
+            "schema_version": "1",
+            "exported_at": iso_now(),
+            "response_action": record,
+            "originating_alert": originating_alert,
+        }
     )
