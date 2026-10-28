@@ -41,6 +41,7 @@ from manager.detection.response import (
     find_open_duplicate,
     reject_response_action,
 )
+from manager.linux_response_evidence import command_evidence
 from manager.response_audit import record_decision
 from manager.response_readiness import channel_readiness, response_preflight
 from manager.routers.commands import _audit, _expire_stale_commands
@@ -167,6 +168,7 @@ def _with_command_audit(conn: sqlite3.Connection, rows, *, full_history=False) -
         record["host_id"] = row["host_id"]
         record["expires_at"] = row["expires_at"]
         record["command"] = json.loads(row["command_json"]) if row["command_json"] else None
+        record["endpoint_evidence"] = []
         record["results"] = []
         record["receipts"] = []
         record["audit"] = []
@@ -182,6 +184,10 @@ def _with_command_audit(conn: sqlite3.Connection, rows, *, full_history=False) -
         ]
         record["evidence_truncated"] = not full_history and len(decision_rows) > 100
         if row["command_id"] is not None:
+            record["endpoint_evidence"], truncated = command_evidence(
+                conn, record["command"], row["agent_id"], row["host_id"], full_history=full_history
+            )
+            record["evidence_truncated"] |= truncated
             record["results"] = [
                 dict(r)
                 for r in conn.execute(

@@ -35,7 +35,7 @@ def test_deployed_lab_v13_upgrades_without_copying_or_losing_history(tmp_path, m
     original_root = conn.execute(
         "SELECT rootpage FROM sqlite_master WHERE name='endpoint_records'"
     ).fetchone()[0]
-    assert migrations.migrate(conn) == 23
+    assert migrations.migrate(conn) == 24
     assert tuple(conn.execute("SELECT * FROM endpoint_records_legacy_v13").fetchone()) == original
     assert conn.execute(
         "SELECT rootpage FROM sqlite_master WHERE name='endpoint_records_legacy_v13'"
@@ -43,7 +43,7 @@ def test_deployed_lab_v13_upgrades_without_copying_or_losing_history(tmp_path, m
     assert conn.execute("SELECT COUNT(*) FROM endpoint_records").fetchone()[0] == 0
     assert conn.execute("SELECT token_digest FROM enrolled_agents").fetchone()[0] == "token-digest"
     assert conn.execute("SELECT COUNT(*) FROM incidents").fetchone()[0] == 0
-    assert migrations.migrate(conn) == 23
+    assert migrations.migrate(conn) == 24
 
 
 def test_unknown_lab_layout_refuses_upgrade_atomically(tmp_path, monkeypatch):
