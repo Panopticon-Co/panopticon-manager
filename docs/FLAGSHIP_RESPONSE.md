@@ -37,7 +37,8 @@ extension; native Windows signature verification remains separate future work.
 command poll, delivery/auth mode, contact age and current authority readiness.
 Contact is recent within five minutes, stale afterward and unknown before a poll.
 Contact is an observation, not proof of current connectivity, native capabilities
-or enforcement mode. Capabilities are explicitly not reported and mode is unknown.
+or enforcement mode. Native mode stays unknown. Retained Linux health snapshots may report policy
+capabilities with unverified freshness; see `LINUX_RESPONSE.md`.
 
 `GET /api/v1/response-actions/{id}/preflight` checks permission, pending state,
 retained target/enrollment, separate approval and authority, with contact warnings.

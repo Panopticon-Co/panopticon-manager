@@ -26,3 +26,27 @@ success is inferred from alert creation, approval or command dispatch.
 Validation uses the real centrally governed sensor fixture, the pinned engine's
 Linux rules, durable-worker regressions and focused response-domain/API checks.
 Manual/native E2E remains deferred by the user.
+
+## Analyst execution evidence
+
+Response queue/detail/export now includes `endpoint_evidence` from retained Linux
+`response.action` records. Migration 24 adds a command lookup index over the
+original immutable bodies. Records are scoped to the command's authenticated
+agent; linkage compares host, action, correlation, file path or native process
+PID/start-ticks and boot digest. Disagreement is exposed as `mismatch`, never
+silently discarded or treated as command completion. A matched command identifies
+which operation was reported; it does not independently prove the OS effect.
+
+The queue previews at most 20 reports; `evidence_truncated` directs the analyst
+to full case export. Export includes exact original JSON strings and stored
+SHA-256 digests. Projected native start ticks are decimal strings so browser
+numbers cannot round them. Telemetry never changes command lifecycle: durable
+command receipts remain a separate channel, including late terminal receipts.
+The Console gives dry runs explicit precedence over the sensor's `executed`
+field, which can be true even when the dry-run report says no signal was sent.
+
+Readiness also exposes a retained Linux `command_channel` provider snapshot and
+its reported policy capabilities. Both capture and Manager receive time are
+visible. Freshness stays `unverified` and current execution mode stays `unknown`:
+receiving a delayed health record is not proof of present policy or support.
+These reports are advisory and never weaken authorization or endpoint checks.

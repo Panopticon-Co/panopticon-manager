@@ -541,6 +541,15 @@ def _migration_23(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_24(conn: sqlite3.Connection) -> None:
+    """Index retained native response reports without duplicating their bodies."""
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_linux_response_command "
+        "ON linux_endpoint_records(agent_id,json_extract(raw_json,'$.response.command_id'),"
+        "ingested_at,record_id) WHERE type='response.action'"
+    )
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -565,6 +574,7 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_21,
     _migration_22,
     _migration_23,
+    _migration_24,
 ]
 
 
