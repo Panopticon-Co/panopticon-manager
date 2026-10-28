@@ -67,41 +67,43 @@ def authorize_and_enqueue(
     """
     if command.expires_at <= datetime.now(command.expires_at.tzinfo):
         raise HTTPException(status_code=422, detail="command expired")
-    enrolled = conn.execute(
-        "SELECT host_id FROM enrolled_agents WHERE agent_id = ? AND revoked_at IS NULL",
-        (command.agent_id,),
-    ).fetchone()
-    if enrolled is None:
-        raise HTTPException(status_code=422, detail="target agent is not enrolled")
-    payload = command.model_dump(mode="json")
-    if command.schema_version == "2":
-        payload["expires_at"] = command.expires_at.astimezone(timezone.utc).isoformat()
-    payload.update(
-        {
-            "schema_version": command.schema_version,
-            "host_id": str(enrolled["host_id"]),
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-    )
-    audit_detail = None
-    try:
-        signer = command_signing.signer()
-        if signer is not None:
-            payload["authorization"] = signer.authorization(payload)
-            audit_detail = f"signed ES256 key_id={signer.key_id}"
-        elif conn.execute(
-            "SELECT 1 FROM agent_response_channels WHERE agent_id=? AND command_auth='ES256'",
-            (command.agent_id,),
-        ).fetchone():
-            raise HTTPException(503, "endpoint requires signing; configure command authority first")
-    except command_signing.SigningUnavailable as exc:
-        raise HTTPException(503, "command signing is configured but unavailable") from exc
-    except command_signing.UnsignableCommand as exc:
-        raise HTTPException(422, f"command cannot be signed: {exc}") from exc
     owns_transaction = not conn.in_transaction
     if owns_transaction:
         conn.execute("BEGIN IMMEDIATE")
     try:
+        enrolled = conn.execute(
+            "SELECT host_id FROM enrolled_agents WHERE agent_id = ? AND revoked_at IS NULL",
+            (command.agent_id,),
+        ).fetchone()
+        if enrolled is None:
+            raise HTTPException(status_code=422, detail="target agent is not enrolled")
+        payload = command.model_dump(mode="json")
+        if command.schema_version == "2":
+            payload["expires_at"] = command.expires_at.astimezone(timezone.utc).isoformat()
+        payload.update(
+            {
+                "schema_version": command.schema_version,
+                "host_id": str(enrolled["host_id"]),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        audit_detail = None
+        try:
+            signer = command_signing.signer()
+            if signer is not None:
+                payload["authorization"] = signer.authorization(payload)
+                audit_detail = f"signed ES256 key_id={signer.key_id}"
+            elif conn.execute(
+                "SELECT 1 FROM agent_response_channels WHERE agent_id=? AND command_auth='ES256'",
+                (command.agent_id,),
+            ).fetchone():
+                raise HTTPException(
+                    503, "endpoint requires signing; configure command authority first"
+                )
+        except command_signing.SigningUnavailable as exc:
+            raise HTTPException(503, "command signing is configured but unavailable") from exc
+        except command_signing.UnsignableCommand as exc:
+            raise HTTPException(422, f"command cannot be signed: {exc}") from exc
         conn.execute(
             "INSERT INTO commands (command_id, agent_id, command_json, created_at, "
             "expires_at, alert_id, lifecycle_state) VALUES (?, ?, ?, ?, ?, ?, 'AUTHORIZED')",
