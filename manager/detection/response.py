@@ -29,6 +29,7 @@ from fastapi import HTTPException
 from response_engine.policy import classify_tier
 from response_engine.recommendation import translate_recommendation
 
+from manager.response_audit import record_decision
 from manager.routers.commands import Command, authorize_and_enqueue
 from manager.timeutil import iso_now
 
@@ -77,6 +78,7 @@ def expire_stale_response_actions(conn: sqlite3.Connection) -> None:
             "WHERE response_id = ? AND lifecycle_state = 'PENDING'",
             ("no analyst decision within the authorization window", row["response_id"]),
         )
+        record_decision(conn, row["response_id"], "expired", "system:expiry-sweep")
 
 
 def on_alert_created(conn: sqlite3.Connection, alert: Any) -> None:
@@ -127,6 +129,7 @@ def _insert_response_action(
     state: str,
     target: dict,
     reason: str | None,
+    actor: str = "system:response-engine",
 ) -> str:
     response_id = str(uuid4())
     conn.execute(
@@ -134,6 +137,9 @@ def _insert_response_action(
         "target_json, command_id, created_at, authorized_at, authorized_by, decided_reason) "
         "VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?)",
         (response_id, alert_id, action, tier, state, json.dumps(target), iso_now(), reason),
+    )
+    record_decision(
+        conn, response_id, "staged", actor, {"state": state, "action": action, "reason": reason}
     )
     return response_id
 
@@ -294,6 +300,13 @@ def _on_alert_created(conn: sqlite3.Connection, alert: Any) -> None:
                 "WHERE response_id = ? AND lifecycle_state = 'PENDING'",
                 (f"automatic authorization failed: {exc.detail}", response_id),
             )
+            record_decision(
+                conn,
+                response_id,
+                "rejected",
+                "system:response-engine",
+                {"reason": f"automatic authorization failed: {exc.detail}"},
+            )
 
 
 def authorize_response_action(conn: sqlite3.Connection, response_id: str, actor: str) -> None:
@@ -320,6 +333,13 @@ def authorize_response_action(conn: sqlite3.Connection, response_id: str, actor:
             "WHERE response_id = ?",
             ("originating alert has no agent_id to target", response_id),
         )
+        record_decision(
+            conn,
+            response_id,
+            "rejected",
+            actor,
+            {"reason": "originating alert has no agent_id to target"},
+        )
         return
     command_id = f"resp-{response_id}"
     target = json.loads(row["target_json"])
@@ -330,7 +350,9 @@ def authorize_response_action(conn: sqlite3.Connection, response_id: str, actor:
             conn, row["alert_id"], row["action"], target
         )
         if (agent_id, host_id, verified) != (
-            row["requested_agent_id"], row["requested_host_id"], target
+            row["requested_agent_id"],
+            row["requested_host_id"],
+            target,
         ):
             raise HTTPException(409, "manual response endpoint binding changed")
     elif "boot_id" in target:
@@ -360,6 +382,13 @@ def authorize_response_action(conn: sqlite3.Connection, response_id: str, actor:
                     response_id,
                 ),
             )
+            record_decision(
+                conn,
+                response_id,
+                "rejected",
+                actor,
+                {"reason": "canonical target or enrolled host changed"},
+            )
             return
     command = Command(
         command_id=command_id,
@@ -375,13 +404,16 @@ def authorize_response_action(conn: sqlite3.Connection, response_id: str, actor:
         "authorized_at = ?, authorized_by = ? WHERE response_id = ?",
         (command_id, iso_now(), actor, response_id),
     )
+    record_decision(conn, response_id, "authorized", actor, {"command_id": command_id})
 
 
 def reject_response_action(
     conn: sqlite3.Connection, response_id: str, actor: str, reason: str
 ) -> None:
-    conn.execute(
+    changed = conn.execute(
         "UPDATE response_actions SET lifecycle_state = 'REJECTED', authorized_by = ?, "
         "decided_reason = ? WHERE response_id = ? AND lifecycle_state = 'PENDING'",
         (actor, reason, response_id),
-    )
+    ).rowcount
+    if changed:
+        record_decision(conn, response_id, "rejected", actor, {"reason": reason})

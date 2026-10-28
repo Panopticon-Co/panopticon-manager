@@ -445,6 +445,26 @@ def _migration_19(conn: sqlite3.Connection) -> None:
         conn.execute(f"ALTER TABLE response_actions ADD COLUMN {column} TEXT")
 
 
+def _migration_20(conn: sqlite3.Connection) -> None:
+    """Analyst roles, persistent request identity and append-only decision facts."""
+    conn.execute("ALTER TABLE analyst_credentials ADD COLUMN role TEXT NOT NULL DEFAULT 'analyst'")
+    conn.execute("""CREATE TABLE response_request_keys (
+        analyst_id TEXT NOT NULL, request_id TEXT NOT NULL, payload_digest TEXT NOT NULL,
+        response_id TEXT NOT NULL REFERENCES response_actions(response_id),
+        PRIMARY KEY(analyst_id,request_id)
+    )""")
+    conn.execute("""CREATE TABLE response_decision_audit (
+        event_id TEXT PRIMARY KEY,
+        response_id TEXT NOT NULL REFERENCES response_actions(response_id),
+        event TEXT NOT NULL, actor TEXT NOT NULL, detail TEXT, occurred_at TEXT NOT NULL
+    )""")
+    conn.execute("CREATE INDEX ix_response_decision_audit ON response_decision_audit(response_id)")
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""CREATE TRIGGER response_audit_no_{operation.lower()}
+            BEFORE {operation} ON response_decision_audit
+            BEGIN SELECT RAISE(ABORT, 'response decision audit is append-only'); END""")
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -465,6 +485,7 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_17,
     _migration_18,
     _migration_19,
+    _migration_20,
 ]
 
 

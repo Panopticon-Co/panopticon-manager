@@ -11,19 +11,28 @@ per-caller actor for these decisions.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import sqlite3
 from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from response_engine.access import AnalystRole
 from response_engine.catalog import action_catalog
 from response_engine.contract import Action
 
 from manager import db
 from manager.analyst_response import resolve_manual_target
-from manager.auth import enroll_analyst, require_analyst_token
+from manager.auth import (
+    analyst_access,
+    enroll_analyst,
+    require_analyst_permission,
+    require_analyst_token,
+)
 from manager.detection.response import (
     _insert_response_action,
     authorize_response_action,
@@ -31,7 +40,9 @@ from manager.detection.response import (
     find_open_duplicate,
     reject_response_action,
 )
+from manager.response_audit import record_decision
 from manager.routers.commands import _audit, _expire_stale_commands
+from manager.timeutil import iso_now
 
 router = APIRouter()
 
@@ -58,11 +69,13 @@ _COLUMNS = (
 class AnalystEnrollmentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     analyst_id: str = Field(min_length=1, max_length=128)
+    role: AnalystRole = AnalystRole.ANALYST
 
 
 class AnalystEnrollmentResponse(BaseModel):
     analyst_id: str
     access_token: str
+    role: AnalystRole = AnalystRole.ANALYST
     token_type: str = "Bearer"
 
 
@@ -82,6 +95,16 @@ class ManualRequest(RejectRequest):
     alert_id: str = Field(min_length=1, max_length=128)
     action: Action
     target: dict = Field(default_factory=dict, max_length=16)
+    request_id: str | None = Field(
+        default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$"
+    )
+
+    @field_validator("request_id")
+    @classmethod
+    def provided_id_is_not_null(cls, value):
+        if value is None:
+            raise ValueError("request_id must be omitted or a nonempty string")
+        return value
 
 
 _SELECT_PENDING = (
@@ -90,6 +113,17 @@ _SELECT_PENDING = (
 
 
 ResponseActionState = Literal["PENDING", "AUTHORIZED", "REJECTED", "EXPIRED"]
+CommandState = Literal[
+    "AUTHORIZED",
+    "DISPATCHED",
+    "ACCEPTED",
+    "SUCCEEDED",
+    "FAILED",
+    "REJECTED",
+    "EXPIRED",
+    "CANCELLED",
+    "INDETERMINATE",
+]
 
 _SELECT = (
     f"SELECT {', '.join('ra.' + c for c in _COLUMNS)}, "
@@ -106,7 +140,7 @@ def _row_to_dict(row) -> dict:
     return record
 
 
-def _with_command_audit(conn: sqlite3.Connection, rows) -> list[dict]:
+def _with_command_audit(conn: sqlite3.Connection, rows, *, full_history=False) -> list[dict]:
     """Serialize response_actions rows (selected with ``_SELECT``), adding the
     linked command's ``command_lifecycle_state`` and its ``command_audit``
     rows as ``audit`` (empty for an action that never produced a command)."""
@@ -121,6 +155,17 @@ def _with_command_audit(conn: sqlite3.Connection, rows) -> list[dict]:
         record["results"] = []
         record["receipts"] = []
         record["audit"] = []
+        decision_rows = conn.execute(
+            "SELECT event_id,event,actor,detail,occurred_at FROM response_decision_audit "
+            "WHERE response_id=? ORDER BY occurred_at,rowid"
+            + ("" if full_history else " LIMIT 101"),
+            (row["response_id"],),
+        ).fetchall()
+        record["decision_audit"] = [
+            {**dict(r), "detail": json.loads(r["detail"]) if r["detail"] else None}
+            for r in (decision_rows if full_history else decision_rows[:100])
+        ]
+        record["evidence_truncated"] = not full_history and len(decision_rows) > 100
         if row["command_id"] is not None:
             record["results"] = [
                 dict(r)
@@ -134,7 +179,8 @@ def _with_command_audit(conn: sqlite3.Connection, rows) -> list[dict]:
                 {"received_at": r["received_at"], "payload": json.loads(r["raw_json"])}
                 for r in conn.execute(
                     "SELECT received_at,raw_json FROM command_result_receipts "
-                    "WHERE command_id=? ORDER BY received_at,result_id",
+                    "WHERE command_id=? ORDER BY received_at,result_id"
+                    + ("" if full_history else " LIMIT 21"),
                     (row["command_id"],),
                 )
             ]
@@ -142,10 +188,17 @@ def _with_command_audit(conn: sqlite3.Connection, rows) -> list[dict]:
                 dict(a)
                 for a in conn.execute(
                     "SELECT audit_id, event, actor, detail, occurred_at FROM command_audit "
-                    "WHERE command_id = ? ORDER BY occurred_at, rowid",
+                    "WHERE command_id = ? ORDER BY occurred_at, rowid"
+                    + ("" if full_history else " LIMIT 101"),
                     (row["command_id"],),
                 ).fetchall()
             ]
+            if not full_history:
+                record["evidence_truncated"] |= (
+                    len(record["audit"]) > 100 or len(record["receipts"]) > 20
+                )
+                record["audit"] = record["audit"][:100]
+                record["receipts"] = record["receipts"][:20]
         out.append(record)
     return out
 
@@ -181,14 +234,30 @@ def response_actions_for_alerts(conn: sqlite3.Connection, alert_ids: list[str]) 
 async def enroll(
     request: AnalystEnrollmentRequest, x_panopticon_analyst_enrollment_token: str = Header(...)
 ) -> AnalystEnrollmentResponse:
-    token = enroll_analyst(request.analyst_id, x_panopticon_analyst_enrollment_token)
-    return AnalystEnrollmentResponse(analyst_id=request.analyst_id, access_token=token)
+    token = enroll_analyst(request.analyst_id, x_panopticon_analyst_enrollment_token, request.role)
+    return AnalystEnrollmentResponse(
+        analyst_id=request.analyst_id, access_token=token, role=request.role
+    )
+
+
+@router.get("/api/v1/analysts/me")
+async def current_analyst(authorization: str | None = Header(default=None)) -> dict:
+    return {**analyst_access(authorization), "separate_approver_required": separate_approver()}
+
+
+def separate_approver() -> bool:
+    # Typos must not silently weaken an explicitly configured approval policy.
+    value = os.environ.get("PANOPTICON_REQUIRE_SEPARATE_APPROVER", "false").strip().lower()
+    if value not in {"true", "false", "1", "0"}:
+        raise HTTPException(503, "separate-approver policy configuration is invalid")
+    return value in {"true", "1"}
 
 
 @router.get("/api/v1/response-actions")
 async def list_response_actions(
     authorization: str | None = Header(default=None),
     state: ResponseActionState | None = None,
+    command_state: CommandState | None = None,
     host_id: str | None = Query(default=None, max_length=128),
     alert_id: str | None = Query(default=None, max_length=128),
     limit: int = Query(default=200, ge=1, le=200),
@@ -200,6 +269,7 @@ async def list_response_actions(
     terms, params = [], []
     for column, value in (
         ("ra.lifecycle_state", state),
+        ("c.lifecycle_state", command_state),
         ("a.host_id", host_id),
         ("ra.alert_id", alert_id),
     ):
@@ -219,16 +289,41 @@ async def list_response_actions(
 
 @router.get("/api/v1/response-actions/catalog")
 async def catalog(authorization: str | None = Header(default=None)) -> dict:
-    require_analyst_token(authorization)
-    return {"actions": [item.model_dump(mode="json") for item in action_catalog()]}
+    access = analyst_access(authorization)
+    return {
+        "actions": [item.model_dump(mode="json") for item in action_catalog()],
+        "analyst": {**access, "separate_approver_required": separate_approver()},
+    }
 
 
 @router.post("/api/v1/response-actions", status_code=201)
 async def create_manual(request: ManualRequest, authorization: str | None = Header(None)) -> dict:
-    actor = "analyst:" + require_analyst_token(authorization)
+    actor = "analyst:" + require_analyst_permission(authorization, "response:request")
     conn = db.connect()
     conn.execute("BEGIN IMMEDIATE")
     try:
+        digest = hashlib.sha256(
+            json.dumps(
+                request.model_dump(exclude={"request_id"}), sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+        if request.request_id is not None:
+            prior = conn.execute(
+                "SELECT k.payload_digest,ra.response_id,ra.lifecycle_state,ra.target_json "
+                "FROM response_request_keys k JOIN response_actions ra "
+                "ON ra.response_id=k.response_id WHERE k.analyst_id=? AND k.request_id=?",
+                (actor, request.request_id),
+            ).fetchone()
+            if prior is not None:
+                if prior["payload_digest"] != digest:
+                    raise HTTPException(409, "request_id is already bound to a different request")
+                conn.commit()
+                return {
+                    "response_id": prior["response_id"],
+                    "lifecycle_state": prior["lifecycle_state"],
+                    "target": json.loads(prior["target_json"]),
+                    "replayed": True,
+                }
         expire_stale_response_actions(conn)
         _expire_stale_commands(conn, datetime.now(timezone.utc).isoformat())
         agent, host, target = resolve_manual_target(
@@ -255,12 +350,18 @@ async def create_manual(request: ManualRequest, authorization: str | None = Head
             state="PENDING",
             target=target,
             reason=request.reason,
+            actor=actor,
         )
         conn.execute(
             "UPDATE response_actions SET origin='analyst',requested_by=?,request_reason=?,"
             "requested_agent_id=?,requested_host_id=? WHERE response_id=?",
             (actor, request.reason, agent, host, response_id),
         )
+        if request.request_id is not None:
+            conn.execute(
+                "INSERT INTO response_request_keys VALUES (?,?,?,?)",
+                (actor, request.request_id, digest, response_id),
+            )
         conn.commit()
     except Exception:
         conn.rollback()
@@ -272,7 +373,7 @@ async def create_manual(request: ManualRequest, authorization: str | None = Head
 async def cancel(
     response_id: str, request: RejectRequest, authorization: str | None = Header(default=None)
 ) -> dict:
-    actor = "analyst:" + require_analyst_token(authorization)
+    actor = "analyst:" + require_analyst_permission(authorization, "response:decide")
     conn = db.connect()
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -292,6 +393,7 @@ async def cancel(
                 (row["command_id"],),
             )
             _audit(conn, row["command_id"], "cancelled", actor, request.reason)
+            record_decision(conn, response_id, "cancelled", actor, {"reason": request.reason})
         conn.commit()
     except Exception:
         conn.rollback()
@@ -301,7 +403,7 @@ async def cancel(
 
 @router.post("/api/v1/response-actions/{response_id}/authorize")
 async def authorize(response_id: str, authorization: str | None = Header(default=None)) -> dict:
-    analyst_id = require_analyst_token(authorization)
+    analyst_id = require_analyst_permission(authorization, "response:decide")
     conn = db.connect()
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -309,6 +411,12 @@ async def authorize(response_id: str, authorization: str | None = Header(default
         row = conn.execute(_SELECT_PENDING, (response_id,)).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="no pending response action with that id")
+        if separate_approver():
+            requester = conn.execute(
+                "SELECT requested_by FROM response_actions WHERE response_id=?", (response_id,)
+            ).fetchone()["requested_by"]
+            if requester == "analyst:" + analyst_id:
+                raise HTTPException(403, "a different analyst must approve this manual request")
         authorize_response_action(conn, response_id, actor=f"analyst:{analyst_id}")
         conn.commit()
     except Exception:
@@ -330,7 +438,7 @@ async def authorize(response_id: str, authorization: str | None = Header(default
 async def reject(
     response_id: str, request: RejectRequest, authorization: str | None = Header(default=None)
 ) -> dict:
-    analyst_id = require_analyst_token(authorization)
+    analyst_id = require_analyst_permission(authorization, "response:decide")
     conn = db.connect()
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -346,3 +454,24 @@ async def reject(
         conn.rollback()
         raise
     return {"response_id": response_id, "rejected": True}
+
+
+@router.get("/api/v1/response-actions/{response_id}/export")
+async def export_response(response_id: str, authorization: str | None = Header(None)):
+    require_analyst_token(authorization)
+    conn = db.connect()
+    expire_pending(conn)
+    # One read snapshot keeps state, command and histories internally consistent.
+    conn.execute("BEGIN")
+    try:
+        rows = conn.execute(_SELECT + " WHERE ra.response_id=?", (response_id,)).fetchall()
+        if not rows:
+            raise HTTPException(404, "no response action with that id")
+        record = _with_command_audit(conn, rows, full_history=True)[0]
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return JSONResponse(
+        {"schema_version": "1", "exported_at": iso_now(), "response_action": record}
+    )
