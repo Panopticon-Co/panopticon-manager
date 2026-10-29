@@ -117,3 +117,41 @@ def test_signed_manifest_cannot_be_changed_or_reattested_on_retry(client):
         .fetchone()[0]
     )
     assert original == body["manifest"]
+
+
+def test_download_returns_verified_signed_package_and_audits_actual_actor(client):
+    operator, agent, _, body, url = prepared(client)
+    assert client.post(url, headers=agent, json=body).status_code == 200
+    path = "/api/v1/response-artifacts/" + body["manifest"]["artifact_id"] + "/content"
+    response = client.get(path, headers=operator)
+    assert response.status_code == 200, response.text
+    package = response.json()
+    assert package["manifest"] == body["manifest"]
+    assert base64.b64decode(package["content_base64"]) == base64.b64decode(body["content_base64"])
+    assert package["signing_key"]["trust_status"] == "active_key"
+    event = (
+        db.connect()
+        .execute("SELECT actor,event FROM response_artifact_custody ORDER BY sequence DESC LIMIT 1")
+        .fetchone()
+    )
+    assert tuple(event) == ("analyst:operator", "download_requested")
+    assert audit_chain.verify(db.connect())["complete_history_verified"]
+
+
+@pytest.mark.parametrize("corruption", ["{}", "not-json"])
+def test_corrupt_retained_attestation_is_refused_and_audited(client, corruption):
+    operator, agent, _, body, url = prepared(client)
+    assert client.post(url, headers=agent, json=body).status_code == 200
+    conn = db.connect()
+    conn.execute("DROP TRIGGER artifact_attestation_no_update")
+    conn.execute("UPDATE artifact_manifest_attestations SET manifest_json=?", (corruption,))
+    conn.commit()
+    path = "/api/v1/response-artifacts/" + body["manifest"]["artifact_id"] + "/content"
+    assert client.get(path, headers=operator).status_code == 503
+    assert (
+        conn.execute(
+            "SELECT event FROM response_artifact_custody ORDER BY sequence DESC LIMIT 1"
+        ).fetchone()[0]
+        == "integrity_check_failed"
+    )
+    assert audit_chain.verify(conn)["complete_history_verified"]

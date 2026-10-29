@@ -251,7 +251,11 @@ def retain_signed(conn, agent_id, command_id, upload):
         (
             "artifact_signature_verified",
             "system:artifact-verifier",
-            {"key_id": key["key_id"], "key_version": key["key_version"]},
+            {
+                "key_id": key["key_id"],
+                "key_version": key["key_version"],
+                "manifest_sha256": hashlib.sha256(canonical(manifest).encode()).hexdigest(),
+            },
         ),
         ("artifact_hash_verified", "system:artifact-verifier", {"sha256": manifest["sha256"]}),
     ):

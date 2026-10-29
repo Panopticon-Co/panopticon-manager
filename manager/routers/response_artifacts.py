@@ -1,13 +1,16 @@
 """Agent artifact acceptance and analyst attachment downloads; no arbitrary paths."""
 
+import base64
 import hashlib
+import json
 import threading
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
+from response_engine.artifacts import artifact_signing_input
 
 from manager import db
 from manager import response_artifacts as store
-from manager.artifact_keys import record, retained_status
+from manager.artifact_keys import record, retained_status, verify_signature
 from manager.auth import require_agent_token, require_analyst_token
 from manager.wire.linux_endpoint import strict_json
 
@@ -165,6 +168,52 @@ async def content(artifact_id: str, authorization: str | None = Header(None)):
             raise HTTPException(
                 503, "artifact integrity check failed; original retained for investigation"
             )
+        attestation = conn.execute(
+            """SELECT a.manifest_json,k.public_key FROM artifact_manifest_attestations a
+            JOIN artifact_signing_keys k ON k.agent_id=a.agent_id AND k.key_id=a.key_id
+            WHERE a.artifact_id=?""",
+            (artifact_id,),
+        ).fetchone()
+        package = None
+        if attestation is not None:
+            try:
+                manifest = json.loads(attestation["manifest_json"])
+                verification = conn.execute(
+                    "SELECT detail FROM response_artifact_custody "
+                    "WHERE artifact_id=? AND event='artifact_signature_verified' "
+                    "ORDER BY sequence LIMIT 1",
+                    (artifact_id,),
+                ).fetchone()
+                manifest_digest = hashlib.sha256(store.canonical(manifest).encode()).hexdigest()
+                valid = (
+                    verification is not None
+                    and json.loads(verification["detail"]).get("manifest_sha256") == manifest_digest
+                    and manifest["artifact_id"] == artifact_id
+                    and manifest["sha256"] == row["sha256"]
+                    and manifest["content_bytes"] == row["content_bytes"]
+                    and verify_signature(
+                        attestation["public_key"],
+                        manifest["authorization"]["signature"],
+                        artifact_signing_input(manifest),
+                    )
+                )
+            except (ValueError, KeyError, TypeError, AttributeError):
+                valid = False
+            if not valid:
+                store.custody_event(
+                    conn,
+                    artifact_id,
+                    "integrity_check_failed",
+                    "system:artifact-verifier",
+                    {"kind": "signed_manifest"},
+                )
+                conn.commit()
+                raise HTTPException(503, "artifact manifest integrity failed; evidence preserved")
+            package = {
+                "manifest": manifest,
+                "content_base64": base64.b64encode(data).decode(),
+                "signing_key": signing,
+            }
         store.custody_event(
             conn,
             artifact_id,
@@ -177,7 +226,7 @@ async def content(artifact_id: str, authorization: str | None = Header(None)):
         conn.rollback()
         raise
     return Response(
-        data,
+        store.canonical(package).encode() if package is not None else data,
         media_type="application/json",
         headers={
             "Content-Disposition": f'attachment; filename="{artifact_id}.json"',
