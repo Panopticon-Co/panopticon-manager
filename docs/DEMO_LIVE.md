@@ -14,14 +14,16 @@ Lab layout (VMnet10, see `VMWARE_IMPLEMENTATION.md`):
 ## 0. Before you start
 
 - Power on both VMs and log in to the Windows guest. This is manual.
-- **Disk.** The Manager's active data disk is 8 GiB (`/srv/panopticon-data`). The agent
-  produces roughly 40 KB per record, at thousands of records an hour once inventories and
-  event logs flow, and nothing prunes telemetry.
+- **Disk.** The Manager's data volume `/srv/panopticon-data` (40 GB, `/dev/sdb`) was 100% full
+  on 2026-10-30, holding the 39 GB Oct 27–28 database. The agent produces roughly 40 KB per
+  record, at tens of thousands of records an hour once inventories and event logs flow, and
+  nothing prunes telemetry.
   - Run the agent only for rehearsal and the demo, and stop it right after.
   - `demo_check.py` prints free space, and `demo_up.sh` refuses to start below 3 GB
     (override with `MIN_FREE_GB=N` only for a short run).
-- **One Manager only.** Stop the lab's systemd Manager unit before `demo_up.sh`.
-  `demo_up.sh` refuses to start if the port is already taken.
+- **One Manager only.** Stop the lab's systemd units (`panopticon-manager.service` and
+  `panopticon-console.service`) before `demo_up.sh`. `demo_up.sh` refuses to start if
+  port 8000 or 8787 is already taken.
 
 ## 1. Start Manager + console (manager VM)
 
@@ -29,7 +31,7 @@ Lab layout (VMnet10, see `VMWARE_IMPLEMENTATION.md`):
 cd ~/panopticon-manager   # branch demo/live-integration, submodules initialised
 git submodule update --init --recursive
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -r vendor/eyedetect/requirements.txt
-sudo systemctl stop <the manager unit nginx proxies to>
+sudo systemctl stop panopticon-manager.service panopticon-console.service
 tools/demo_up.sh --fresh --bind 127.0.0.1:8000 --public-url https://10.77.10.10 \
   --state-dir /srv/panopticon-data/demo-state
 ```

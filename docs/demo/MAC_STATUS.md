@@ -32,8 +32,34 @@ Only the Mac session edits this file. The Windows session reports back in
   - `demo_up.sh` goes from cold to all-green in about 3 s.
   - Synthetic records posted over HTTP reached `done` in about 1 s, with 4 rule alerts plus
     CORR-RISK-001, and the console reads them from the Manager.
-- **Deploy:** follow `docs/DEMO_LIVE.md` §1. Stop the systemd Manager unit first. Use
-  `--state-dir` on `/srv/panopticon-data` and check free space; that disk is 8 GiB.
+- **Deploy:** follow `docs/DEMO_LIVE.md` §1. Stop `panopticon-manager.service` **and**
+  `panopticon-console.service` first, because they hold ports 8000 and 8787. Point
+  `--state-dir` at a volume with room (check with `df -h`).
+
+## Contract for `tools/demo/demo-up.ps1`: read files, don't parse output
+
+- **Check out anywhere.** `demo_up.sh` resolves its own repo root. It uses `./.venv/bin/python`
+  when present, otherwise `--python`. The console is `../panopticon-console` unless you pass
+  `--console-dir`.
+- **Exit status.** `tools/demo_up.sh ...` exits 0 only when the full stack is verified
+  green, and non-zero with a log tail on any failure. It detaches (`nohup`), so it returns
+  over SSH. It is safe to re-run after `--stop`.
+- **State files** under `--state-dir` (one line each; read them with `ssh ... cat`):
+  - `manager.url`: the local Manager URL, e.g. `http://127.0.0.1:8000`.
+  - `console.url`: the local console URL, e.g. `http://127.0.0.1:8787`.
+  - `bootstrap.token`: copy this into the guest as `C:\pano\bootstrap.token`.
+  - `analyst.token`: the console's analyst bearer, for API checks.
+  - `db.path`, plus `manager.log`, `console.log`, `manager.pid` and `console.pid`.
+- **Readiness check:** `.venv/bin/python tools/demo_check.py --state-dir <dir>` exits 0
+  when nothing is FAIL. It is a Python script, not `demo_check.sh`.
+- **Stop:** `tools/demo_up.sh --stop --state-dir <dir>`.
+- **Agent flags**, exactly as `demo_up.sh` prints them:
+  `--source all --manager-url https://10.77.10.10 --enable-response --bootstrap-token-path
+  C:\pano\bootstrap.token --identity-path C:\pano\identity --keypair-path C:\pano\agent.key
+  --spool-directory C:\pano\spool-demo`. Use a new spool dir and no identity file for a
+  fresh DB.
+- **Console from the host:** `ssh -L 8787:127.0.0.1:8787 <user>@10.77.10.10`, then browse
+  `http://127.0.0.1:8787`.
 
 ## Console branch `demo/live-integration`: READY at 86b01c9
 
