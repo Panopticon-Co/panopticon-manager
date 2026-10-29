@@ -43,6 +43,7 @@ from manager.detection.response import (
 )
 from manager.linux_response_evidence import command_evidence
 from manager.response_audit import record_decision
+from manager.response_profile import current_profile, policy_block
 from manager.response_readiness import channel_readiness, response_preflight
 from manager.routers.commands import _audit, _expire_stale_commands
 from manager.timeutil import iso_now
@@ -168,6 +169,7 @@ def _with_command_audit(conn: sqlite3.Connection, rows, *, full_history=False) -
         record["host_id"] = row["host_id"]
         record["expires_at"] = row["expires_at"]
         record["command"] = json.loads(row["command_json"]) if row["command_json"] else None
+        record["dispatch_blocker"] = None
         record["endpoint_evidence"] = []
         record["results"] = []
         record["receipts"] = []
@@ -184,6 +186,9 @@ def _with_command_audit(conn: sqlite3.Connection, rows, *, full_history=False) -
         ]
         record["evidence_truncated"] = not full_history and len(decision_rows) > 100
         if row["command_id"] is not None:
+            if row["command_lifecycle_state"] in {"AUTHORIZED", "DISPATCHED"}:
+                profile = current_profile(conn, row["agent_id"], row["host_id"])
+                record["dispatch_blocker"] = policy_block(profile, row["action"], record["target"])
             record["endpoint_evidence"], truncated = command_evidence(
                 conn, record["command"], row["agent_id"], row["host_id"], full_history=full_history
             )

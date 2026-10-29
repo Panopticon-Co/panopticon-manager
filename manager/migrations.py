@@ -550,6 +550,12 @@ def _migration_24(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_25(conn: sqlite3.Connection) -> None:
+    """Bind current runtime configuration to authenticated command-channel observations."""
+    for column in ("profile_json", "profile_observed_at", "profile_host_id"):
+        conn.execute(f"ALTER TABLE agent_response_channels ADD COLUMN {column} TEXT")
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -575,6 +581,7 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_22,
     _migration_23,
     _migration_24,
+    _migration_25,
 ]
 
 
