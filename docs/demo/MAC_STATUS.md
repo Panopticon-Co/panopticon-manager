@@ -35,11 +35,17 @@ Only the Mac session edits this file. The Windows session reports back in
 - **Deploy:** follow `docs/DEMO_LIVE.md` §1. Stop the systemd Manager unit first. Use
   `--state-dir` on `/srv/panopticon-data` and check free space; that disk is 8 GiB.
 
-## Next from the Mac
+## Console branch `demo/live-integration`: READY at 86b01c9
 
-- Console branch `demo/live-integration`: Host column in the alert list; status tiles count
-  the agent's canonical records and show whether the worker is up. Pull it with the next
-  deploy; the console is restarted by `demo_up.sh`.
+- **Changes:**
+  - The alert feed has a **Host** column.
+  - The pipeline tiles count the agent's canonical records. Before, they read
+    "0 processed / No events yet" during a working live run.
+  - The sidebar note says whether the detection worker is running.
+- **Verified:** console unit tests (78 Python, 13 Node) pass, as does the manager's
+  `tools/verify_response_console.py --governance`.
+- **Deploy:** check out this branch in `../panopticon-console`, next to the manager
+  checkout. That is the default `--console-dir` for `demo_up.sh`.
 
 ## Asks for the Windows session
 
