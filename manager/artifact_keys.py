@@ -15,6 +15,14 @@ from manager import audit_chain, command_signing
 from manager.timeutil import iso_now
 
 
+def server_time(value):
+    # Python 3.10 does not accept RFC3339's Z suffix in fromisoformat().
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.utcoffset() is None:
+        raise ValueError("artifact key timestamp requires a timezone")
+    return parsed
+
+
 def public_point(encoded):
     try:
         raw = base64.b64decode(encoded, validate=True)
@@ -112,7 +120,7 @@ def request_rotation(conn, agent_id, request):
     if (
         nonce is None
         or nonce["consumed_at"] is not None
-        or datetime.fromisoformat(nonce["expires_at"]) <= datetime.now(timezone.utc)
+        or server_time(nonce["expires_at"]) <= datetime.now(timezone.utc)
     ):
         raise HTTPException(401, "invalid rotation challenge")
     encoded = rotation_input(
@@ -167,7 +175,7 @@ def approve_rotation(conn, agent_id, request_id, actor):
         raise HTTPException(404, "artifact key rotation unavailable")
     if row["state"] == "APPROVED":
         return {"request_id": request_id, "state": "APPROVED", "replayed": True}
-    if datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
+    if server_time(row["expires_at"]) <= datetime.now(timezone.utc):
         raise HTTPException(409, "artifact key rotation approval window expired")
     old = current(conn, agent_id)
     if old is None or old["key_id"] != row["old_key_id"]:
@@ -222,7 +230,7 @@ def verify_manifest(conn, agent_id, manifest, *, admitted_at=None):
         raise HTTPException(403, "artifact signing identity is revoked or compromised")
     if key["retired_at"] is not None and (
         admitted_at is None
-        or datetime.fromisoformat(admitted_at) >= datetime.fromisoformat(key["retired_at"])
+        or server_time(admitted_at) > server_time(key["retired_at"])
     ):
         raise HTTPException(403, "retired key cannot admit a new artifact transfer")
     if not verify_signature(
