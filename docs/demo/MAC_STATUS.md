@@ -4,7 +4,7 @@ Coordination file for tonight's demo integration (see `docs/DEMO_LIVE.md`).
 Only the Mac session edits this file. The Windows session reports back in
 `panopticon-agent` branch `demo/windows-validation`, `docs/demo/WINDOWS_STATUS.md`.
 
-## Manager branch `demo/live-integration`: READY TO DEPLOY
+## Manager branch `demo/live-integration`: READY TO DEPLOY at c399ee3
 
 - **Base:** `origin/main` `add66c0`. The submodule pins are unchanged (engine `9697e6b`,
   response engine `83b8a46`).
