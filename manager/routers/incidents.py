@@ -82,7 +82,7 @@ async def list_incidents(
 
 @router.get("/api/v1/incidents/{incident_id}")
 async def get_incident(incident_id: str, authorization: str | None = Header(default=None)) -> dict:
-    require_analyst_token(authorization)
+    analyst_id = require_analyst_token(authorization)
     conn = db.connect()
     row = _load_summary(conn, incident_id)
     if row is None:
@@ -115,7 +115,9 @@ async def get_incident(incident_id: str, authorization: str | None = Header(defa
     return {
         "incident": incident,
         "alerts": alerts,
-        "response_actions": response_actions_for_alerts(conn, [a["alert_id"] for a in alerts]),
+        "response_actions": response_actions_for_alerts(
+            conn, [a["alert_id"] for a in alerts], analyst_id=analyst_id
+        ),
         "audit": audit,
     }
 

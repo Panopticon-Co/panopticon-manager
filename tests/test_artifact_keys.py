@@ -78,7 +78,8 @@ def test_enrollment_records_versioned_key_and_chained_security_event(client):
     first = response.json()["keys"][0]
     assert first["public_key"] == point(key)
     assert first["key_version"] == 1 and first["trust_status"] == "active_key"
-    assert audit_chain.verify(db.connect())["chain_verified_count"] == 1
+    # Agent key enrollment and the separately authenticated analyst identity are chained.
+    assert audit_chain.verify(db.connect())["chain_verified_count"] == 2
     assert client.get("/api/v1/agents/agent-1/artifact-keys", headers=agent).status_code == 401
 
 

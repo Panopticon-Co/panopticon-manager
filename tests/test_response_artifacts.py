@@ -11,6 +11,7 @@ import pytest
 
 from manager import db
 from manager.response_artifacts import canonical
+from tests.artifact_access_support import grant_reader
 from tests.test_analyst_operations import create, setup
 
 
@@ -24,6 +25,7 @@ def prepared(client, *, dispatch=True):
     command = json.loads(conn.execute("SELECT command_json FROM commands").fetchone()[0])
     if dispatch:
         assert client.get("/api/v1/agents/agent-1/commands", headers=agent).status_code == 200
+    grant_reader(client, analyst)
     return analyst, agent, rid, command
 
 

@@ -8,13 +8,14 @@ import pytest
 from response_engine.artifacts import artifact_signing_input
 
 from manager import audit_chain, command_signing, db
+from tests.artifact_access_support import grant_reader
 from tests.test_analyst_operations import create
 from tests.test_artifact_keys import analyst, enrolled
 from tests.test_response_actions_route import _stage_response_action
 from tests.test_response_artifacts import artifact
 
 
-def prepared(client, *, data=None, key=None):
+def prepared(client, *, data=None, key=None, with_scope=True):
     private, agent = enrolled(client, key=key)
     operator = analyst(client)
     _stage_response_action("agent-1", "alert-1", action="ISOLATE_HOST")
@@ -45,6 +46,8 @@ def prepared(client, *, data=None, key=None):
     )
     body = {"manifest": manifest, "content_base64": value["content_base64"]}
     url = f"/api/v1/agents/agent-1/commands/{command['command_id']}/artifacts/signed"
+    if with_scope:
+        grant_reader(client, operator)
     return operator, agent, command, body, url
 
 

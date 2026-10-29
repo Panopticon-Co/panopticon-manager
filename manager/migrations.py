@@ -723,6 +723,42 @@ def _migration_29(conn: sqlite3.Connection) -> None:
         BEGIN SELECT RAISE(ABORT,'artifact transfer history must be retained'); END""")
 
 
+def _migration_30(conn: sqlite3.Connection) -> None:
+    """Artifact access policy 1: explicit credential-bound scopes; no legacy grants."""
+    conn.execute("""CREATE TABLE artifact_access_grants (
+        grant_id TEXT PRIMARY KEY,
+        analyst_id TEXT NOT NULL REFERENCES analyst_credentials(analyst_id),
+        credential_digest TEXT NOT NULL, host_id TEXT NOT NULL,
+        alert_id TEXT NOT NULL REFERENCES alerts(alert_id),
+        policy_version INTEGER NOT NULL CHECK(policy_version=1),
+        granted_by TEXT NOT NULL, reason TEXT NOT NULL, created_at TEXT NOT NULL,
+        revoked_at TEXT, revoked_by TEXT, revoke_reason TEXT,
+        CHECK((revoked_at IS NULL AND revoked_by IS NULL AND revoke_reason IS NULL)
+           OR (revoked_at IS NOT NULL AND revoked_by IS NOT NULL
+               AND revoke_reason IS NOT NULL)))""")
+    conn.execute("""CREATE UNIQUE INDEX artifact_access_active
+        ON artifact_access_grants(analyst_id,credential_digest,host_id,alert_id)
+        WHERE revoked_at IS NULL""")
+    conn.execute("""CREATE TRIGGER artifact_access_identity_immutable
+        BEFORE UPDATE ON artifact_access_grants
+        WHEN NEW.grant_id!=OLD.grant_id OR NEW.analyst_id!=OLD.analyst_id
+        OR NEW.credential_digest!=OLD.credential_digest OR NEW.host_id!=OLD.host_id
+        OR NEW.alert_id!=OLD.alert_id OR NEW.policy_version!=OLD.policy_version
+        OR NEW.granted_by!=OLD.granted_by OR NEW.reason!=OLD.reason
+        OR NEW.created_at!=OLD.created_at
+        OR OLD.revoked_at IS NOT NULL OR NEW.revoked_at IS NULL
+        BEGIN SELECT RAISE(ABORT,'artifact access history is immutable'); END""")
+    conn.execute("""CREATE TRIGGER artifact_access_no_delete BEFORE DELETE ON artifact_access_grants
+        BEGIN SELECT RAISE(ABORT,'artifact access history must be retained'); END""")
+    conn.execute("""CREATE TABLE artifact_access_operations (
+        actor TEXT NOT NULL, request_id TEXT NOT NULL, payload_digest TEXT NOT NULL,
+        result_json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(actor,request_id))""")
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""CREATE TRIGGER artifact_access_operations_no_{operation.lower()}
+            BEFORE {operation} ON artifact_access_operations
+            BEGIN SELECT RAISE(ABORT,'artifact access operation is immutable'); END""")
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -753,6 +789,7 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_27,
     _migration_28,
     _migration_29,
+    _migration_30,
 ]
 
 

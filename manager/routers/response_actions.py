@@ -28,6 +28,7 @@ from response_engine.policy import MAX_CAMPAIGN_ACTIONS
 
 from manager import command_signing, db
 from manager.analyst_response import resolve_manual_target
+from manager.artifact_access import can_read_command
 from manager.auth import (
     analyst_access,
     enroll_analyst,
@@ -158,7 +159,9 @@ def _row_to_dict(row) -> dict:
     return record
 
 
-def _with_command_audit(conn: sqlite3.Connection, rows, *, full_history=False) -> list[dict]:
+def _with_command_audit(
+    conn: sqlite3.Connection, rows, *, full_history=False, analyst_id=None
+) -> list[dict]:
     """Serialize response_actions rows (selected with ``_SELECT``), adding the
     linked command's ``command_lifecycle_state`` and its ``command_audit``
     rows as ``audit`` (empty for an action that never produced a command)."""
@@ -170,7 +173,11 @@ def _with_command_audit(conn: sqlite3.Connection, rows, *, full_history=False) -
         record["host_id"] = row["host_id"]
         record["expires_at"] = row["expires_at"]
         record["command"] = json.loads(row["command_json"]) if row["command_json"] else None
-        record["artifacts"] = manifests(conn, row["command_id"], full_history=full_history)
+        artifact_access = can_read_command(conn, analyst_id, row["command_id"])
+        record["artifacts"] = (
+            manifests(conn, row["command_id"], full_history=full_history) if artifact_access else []
+        )
+        record["artifact_access"] = "granted" if artifact_access else "requires_case_endpoint_grant"
         record["dispatch_blocker"] = None
         record["endpoint_evidence"] = []
         record["results"] = []
@@ -244,7 +251,9 @@ def expire_pending(conn: sqlite3.Connection) -> None:
         raise
 
 
-def response_actions_for_alerts(conn: sqlite3.Connection, alert_ids: list[str]) -> list[dict]:
+def response_actions_for_alerts(
+    conn: sqlite3.Connection, alert_ids: list[str], *, analyst_id=None
+) -> list[dict]:
     """Response actions (with command lifecycle and audit) for these alerts,
     oldest first. Used by the alert and incident detail routes."""
     if not alert_ids:
@@ -255,7 +264,7 @@ def response_actions_for_alerts(conn: sqlite3.Connection, alert_ids: list[str]) 
         f"{_SELECT} WHERE ra.alert_id IN ({placeholders}) ORDER BY ra.created_at, ra.response_id",
         tuple(alert_ids),
     ).fetchall()
-    return _with_command_audit(conn, rows)
+    return _with_command_audit(conn, rows, analyst_id=analyst_id)
 
 
 @router.post("/api/v1/analysts/enroll", response_model=AnalystEnrollmentResponse)
@@ -291,7 +300,7 @@ async def list_response_actions(
     limit: int = Query(default=200, ge=1, le=200),
     offset: int = Query(default=0, ge=0, le=1000000),
 ) -> dict:
-    require_analyst_token(authorization)
+    analyst_id = require_analyst_token(authorization)
     conn = db.connect()
     expire_pending(conn)
     terms, params = [], []
@@ -310,7 +319,7 @@ async def list_response_actions(
         (*params, limit + 1, offset),
     ).fetchall()
     return {
-        "response_actions": _with_command_audit(conn, rows[:limit]),
+        "response_actions": _with_command_audit(conn, rows[:limit], analyst_id=analyst_id),
         "next_offset": offset + limit if len(rows) > limit else None,
     }
 
@@ -591,7 +600,7 @@ async def reject(
 
 @router.get("/api/v1/response-actions/{response_id}/export")
 async def export_response(response_id: str, authorization: str | None = Header(None)):
-    require_analyst_token(authorization)
+    analyst_id = require_analyst_token(authorization)
     conn = db.connect()
     expire_pending(conn)
     # One read snapshot keeps state, command and histories internally consistent.
@@ -600,7 +609,7 @@ async def export_response(response_id: str, authorization: str | None = Header(N
         rows = conn.execute(_SELECT + " WHERE ra.response_id=?", (response_id,)).fetchall()
         if not rows:
             raise HTTPException(404, "no response action with that id")
-        record = _with_command_audit(conn, rows, full_history=True)[0]
+        record = _with_command_audit(conn, rows, full_history=True, analyst_id=analyst_id)[0]
         originating_alert = json.loads(
             conn.execute(
                 "SELECT alert_json FROM alerts WHERE alert_id=?", (record["alert_id"],)

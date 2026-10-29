@@ -83,6 +83,22 @@ def test_migrate_is_idempotent(tmp_path: Path) -> None:
     assert count == len(migrations._MIGRATIONS)
 
 
+def test_artifact_access_migration_preserves_identity_and_grants_nothing(tmp_path, monkeypatch):
+    conn = _connect(tmp_path / "before-access.db")
+    with monkeypatch.context() as scoped:
+        scoped.setattr(migrations, "_MIGRATIONS", migrations._MIGRATIONS[:29])
+        migrations.migrate(conn)
+    conn.execute("INSERT INTO analyst_credentials "
+                 "(analyst_id,token_digest,created_at,role) "
+                 "VALUES ('existing','digest','t0','analyst')")
+    conn.commit()
+    assert migrations.migrate(conn) == 30
+    assert conn.execute("SELECT role FROM analyst_credentials").fetchone()[0] == "analyst"
+    assert conn.execute("SELECT COUNT(*) FROM artifact_access_grants").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM artifact_access_operations").fetchone()[0] == 0
+    assert migrations.migrate(conn) == 30
+
+
 def test_latest_migration_preserves_alerts_table(tmp_path: Path) -> None:
     conn = _connect(tmp_path / "test.db")
     migrations.migrate(conn)

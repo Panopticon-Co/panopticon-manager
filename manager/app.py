@@ -16,6 +16,7 @@ from manager import audit_chain, config, db, migrations
 from manager.detection.worker import DetectionWorker
 from manager.routers import (
     alerts,
+    artifact_access,
     artifact_keys,
     artifact_transfers,
     commands,
@@ -54,6 +55,7 @@ async def _lifespan(app: FastAPI):
 
 app = FastAPI(title="Panopticon Manager", lifespan=_lifespan)
 app.include_router(health.router)
+app.include_router(artifact_access.router)
 app.include_router(artifact_keys.router)
 app.include_router(artifact_transfers.router)
 app.include_router(ingest.router)

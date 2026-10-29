@@ -10,6 +10,7 @@ from response_engine.artifacts import artifact_signing_input
 
 from manager import db
 from manager import response_artifacts as store
+from manager.artifact_access import require_artifact
 from manager.artifact_keys import record, retained_status, verify_signature
 from manager.auth import require_agent_token, require_analyst_token
 from manager.wire.linux_endpoint import strict_json
@@ -65,16 +66,19 @@ async def custody(
     limit: int = Query(200, ge=1, le=200),
     authorization: str | None = Header(None),
 ):
-    require_analyst_token(authorization)
     conn = db.connect()
-    if (
-        conn.execute(
-            "SELECT 1 FROM response_artifacts WHERE artifact_id=?", (artifact_id,)
-        ).fetchone()
-        is None
-    ):
-        raise HTTPException(404, "artifact unavailable")
-    events = store.custody_rows(conn, artifact_id, after=after, limit=limit)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        require_artifact(conn, artifact_id, authorization)
+        events = store.custody_rows(conn, artifact_id, after=after, limit=limit)
+        conn.commit()
+    except HTTPException as exc:
+        conn.rollback()
+        audit_read_refusal(conn, artifact_id, authorization, exc)
+        raise
+    except Exception:
+        conn.rollback()
+        raise
     return {
         "artifact_id": artifact_id,
         "events": events,
@@ -135,17 +139,10 @@ async def upload_signed(
 
 @router.get("/api/v1/response-artifacts/{artifact_id}/content")
 async def content(artifact_id: str, authorization: str | None = Header(None)):
-    analyst = require_analyst_token(authorization)
     conn = db.connect()
     conn.execute("BEGIN IMMEDIATE")
     try:
-        require_analyst_token(authorization)
-        row = conn.execute(
-            "SELECT content,sha256,content_bytes FROM response_artifacts WHERE artifact_id=?",
-            (artifact_id,),
-        ).fetchone()
-        if row is None:
-            raise HTTPException(404, "artifact unavailable")
+        analyst, row = require_artifact(conn, artifact_id, authorization)
         signing = retained_status(conn, artifact_id)
         if signing["trust_status"] == "compromised_key":
             store.custody_event(
@@ -222,6 +219,10 @@ async def content(artifact_id: str, authorization: str | None = Header(None)):
             {"sha256": row["sha256"], "content_bytes": len(data)},
         )
         conn.commit()
+    except HTTPException as exc:
+        conn.rollback()
+        audit_read_refusal(conn, artifact_id, authorization, exc)
+        raise
     except Exception:
         conn.rollback()
         raise
@@ -234,3 +235,24 @@ async def content(artifact_id: str, authorization: str | None = Header(None)):
             "Cache-Control": "no-store",
         },
     )
+
+
+def audit_read_refusal(conn, artifact_id, authorization, error):
+    if error.status_code != 403:
+        return
+    # Authenticate again after rollback; never accept an actor from the request body.
+    analyst = require_analyst_token(authorization)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = conn.execute(
+            "SELECT a.host_id,ra.response_id FROM response_artifacts a "
+            "LEFT JOIN response_actions ra ON ra.command_id=a.command_id WHERE a.artifact_id=?",
+            (artifact_id,),
+        ).fetchone()
+        record(conn, "artifact_access_denied", "analyst:" + analyst,
+               row["host_id"] if row else None, row["response_id"] if row else None,
+               {"artifact_id": artifact_id, "reason": error.detail, "policy_version": 1})
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise

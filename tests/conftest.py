@@ -18,6 +18,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("PANOPTICON_ENROLLMENT_TOKEN", "test-bootstrap-token")
     monkeypatch.setenv("PANOPTICON_COMMAND_TOKEN", "test-command-token")
     monkeypatch.setenv("PANOPTICON_ANALYST_ENROLLMENT_TOKEN", "test-analyst-bootstrap-token")
+    monkeypatch.setenv("PANOPTICON_ARTIFACT_ADMIN_ENROLLMENT_TOKEN", "test-artifact-admin-token")
     # Reimport fresh so module-level state (db._db_path, thread-local conn) doesn't
     # leak between tests.
     import manager.app as app_module

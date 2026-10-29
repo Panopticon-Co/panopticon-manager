@@ -213,7 +213,16 @@ def enroll_analyst(analyst_id: str, bootstrap_token: str, role: str = "analyst")
     identity space (analyst_credentials, not enrolled_agents) so an
     analyst's authorization actions in command_audit carry a real
     per-caller actor rather than the shared command-creation token."""
-    expected = os.environ.get("PANOPTICON_ANALYST_ENROLLMENT_TOKEN")
+    admin = role == "artifact_admin"
+    expected = os.environ.get(
+        "PANOPTICON_ARTIFACT_ADMIN_ENROLLMENT_TOKEN"
+        if admin
+        else "PANOPTICON_ANALYST_ENROLLMENT_TOKEN"
+    )
+    if admin and expected and hmac.compare_digest(
+        expected, os.environ.get("PANOPTICON_ANALYST_ENROLLMENT_TOKEN", "")
+    ):
+        raise HTTPException(503, "artifact administrator requires a distinct enrollment secret")
     if not expected or not hmac.compare_digest(bootstrap_token, expected):
         raise HTTPException(status_code=401, detail="invalid analyst enrollment credential")
     from response_engine.access import AnalystRole
@@ -224,10 +233,30 @@ def enroll_analyst(analyst_id: str, bootstrap_token: str, role: str = "analyst")
     conn = db.connect()
     conn.execute("BEGIN IMMEDIATE")
     try:
+        previous = conn.execute(
+            "SELECT role FROM analyst_credentials WHERE analyst_id=?", (analyst_id,)
+        ).fetchone()
+        if previous is not None and previous["role"] == "artifact_admin" and not admin:
+            raise HTTPException(403, "artifact administrator requires dedicated enrollment")
         conn.execute(
             "INSERT OR REPLACE INTO analyst_credentials "
             "(analyst_id, token_digest, created_at, revoked_at, role) VALUES (?, ?, ?, NULL, ?)",
             (analyst_id, _digest(token), iso_now(), role),
+        )
+        from manager.artifact_keys import record
+
+        record(
+            conn,
+            "artifact_access_identity_enrolled",
+            "system:analyst-enrollment",
+            None,
+            None,
+            {
+                "analyst_id": analyst_id,
+                "role": role,
+                "access_policy_version": 2,
+                "existing_scopes_apply": False,
+            },
         )
         conn.commit()
     except Exception:
@@ -259,7 +288,7 @@ def require_analyst_token(authorization: str | None) -> str:
 
 
 def analyst_access(authorization: str | None) -> dict:
-    from response_engine.access import permissions_for
+    from response_engine.access import ACCESS_POLICY_VERSION, permissions_for
 
     analyst_id = require_analyst_token(authorization)
     row = (
@@ -276,6 +305,7 @@ def analyst_access(authorization: str | None) -> dict:
         "analyst_id": analyst_id,
         "role": row["role"],
         "permissions": sorted(p.value for p in permissions_for(row["role"])),
+        "access_policy_version": ACCESS_POLICY_VERSION,
     }
 
 
