@@ -122,6 +122,30 @@ def authorize_and_enqueue(
             ),
         )
         _audit(conn, command.command_id, "created", actor, audit_detail)
+        if command.action in {
+            "COLLECT_PROCESS_INFO",
+            "COLLECT_NETWORK_CONNECTIONS",
+            "COLLECT_FILE",
+        }:
+            from manager.artifact_keys import record
+
+            request = conn.execute(
+                "SELECT response_id FROM response_actions "
+                "WHERE command_id=? OR 'resp-' || response_id=?",
+                (command.command_id, command.command_id),
+            ).fetchone()
+            record(
+                conn,
+                "artifact_requested",
+                actor,
+                enrolled["host_id"],
+                request[0] if request else None,
+                {
+                    "command_id": command.command_id,
+                    "action": command.action,
+                    "maximum_artifact_bytes": 1048576,
+                },
+            )
         if owns_transaction:
             conn.commit()
     except sqlite3.IntegrityError:

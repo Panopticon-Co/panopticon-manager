@@ -59,7 +59,11 @@ class CommandSigner:
         lifetime = epoch_seconds(command["expires_at"]) - epoch_seconds(command["created_at"])
         if not 0 < lifetime <= 900:
             raise UnsignableCommand("signed command lifetime must be within 900 seconds")
-        der = self._key.sign(signing_input(command), ec.ECDSA(hashes.SHA256()))
+        return self.sign_bytes(signing_input(command))
+
+    def sign_bytes(self, data: bytes) -> dict:
+        """Sign caller domain-separated bytes; callers own the document contract."""
+        der = self._key.sign(data, ec.ECDSA(hashes.SHA256()))
         r, s = utils.decode_dss_signature(der)
         raw = r.to_bytes(32, "big") + s.to_bytes(32, "big")
         return {

@@ -35,7 +35,7 @@ def test_deployed_lab_v13_upgrades_without_copying_or_losing_history(tmp_path, m
     original_root = conn.execute(
         "SELECT rootpage FROM sqlite_master WHERE name='endpoint_records'"
     ).fetchone()[0]
-    assert migrations.migrate(conn) == 25
+    assert migrations.migrate(conn) == len(migrations._MIGRATIONS)
     assert tuple(conn.execute("SELECT * FROM endpoint_records_legacy_v13").fetchone()) == original
     assert conn.execute(
         "SELECT rootpage FROM sqlite_master WHERE name='endpoint_records_legacy_v13'"
@@ -43,7 +43,7 @@ def test_deployed_lab_v13_upgrades_without_copying_or_losing_history(tmp_path, m
     assert conn.execute("SELECT COUNT(*) FROM endpoint_records").fetchone()[0] == 0
     assert conn.execute("SELECT token_digest FROM enrolled_agents").fetchone()[0] == "token-digest"
     assert conn.execute("SELECT COUNT(*) FROM incidents").fetchone()[0] == 0
-    assert migrations.migrate(conn) == 25
+    assert migrations.migrate(conn) == len(migrations._MIGRATIONS)
 
 
 def test_unknown_lab_layout_refuses_upgrade_atomically(tmp_path, monkeypatch):
@@ -81,6 +81,22 @@ def test_migrate_is_idempotent(tmp_path: Path) -> None:
     assert version_again == len(migrations._MIGRATIONS)
     count = conn.execute("SELECT COUNT(*) AS c FROM schema_migrations").fetchone()["c"]
     assert count == len(migrations._MIGRATIONS)
+
+
+def test_artifact_access_migration_preserves_identity_and_grants_nothing(tmp_path, monkeypatch):
+    conn = _connect(tmp_path / "before-access.db")
+    with monkeypatch.context() as scoped:
+        scoped.setattr(migrations, "_MIGRATIONS", migrations._MIGRATIONS[:29])
+        migrations.migrate(conn)
+    conn.execute("INSERT INTO analyst_credentials "
+                 "(analyst_id,token_digest,created_at,role) "
+                 "VALUES ('existing','digest','t0','analyst')")
+    conn.commit()
+    assert migrations.migrate(conn) == len(migrations._MIGRATIONS)
+    assert conn.execute("SELECT role FROM analyst_credentials").fetchone()[0] == "analyst"
+    assert conn.execute("SELECT COUNT(*) FROM artifact_access_grants").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM artifact_access_operations").fetchone()[0] == 0
+    assert migrations.migrate(conn) == len(migrations._MIGRATIONS)
 
 
 def test_latest_migration_preserves_alerts_table(tmp_path: Path) -> None:

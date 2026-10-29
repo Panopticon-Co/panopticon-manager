@@ -96,9 +96,14 @@ def on_alert_created(conn: sqlite3.Connection, alert: Any) -> None:
     unexpected failure is swallowed and simply means no response_actions
     row was staged for this alert.
     """
+    conn.execute("SAVEPOINT response_with_audit")
     try:
         _on_alert_created(conn, alert)
+        conn.execute("RELEASE response_with_audit")
     except Exception:
+        # Retain the alert, but never commit a response without its mandatory audit.
+        conn.execute("ROLLBACK TO response_with_audit")
+        conn.execute("RELEASE response_with_audit")
         _log.exception(
             "Response Engine failed to process alert %r", getattr(alert, "alert_id", alert)
         )

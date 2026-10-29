@@ -17,6 +17,14 @@ detection rule today — see [Known limitations](#known-limitations) below.
 Not everything on the phase roadmap (`docs/ROADMAP.md`) is built yet; treat
 this README as current-state, not aspirational.
 
+Signed investigation evidence now uses endpoint-enrolled ES256 key history,
+bounded resumable delivery, verification on every retrieval, explicit analyst
+case/endpoint grants, and chained custody including analyst view acknowledgements.
+Unsigned legacy evidence remains retained with downloads blocked. See
+[artifact access](docs/ARTIFACT_ACCESS.md), [key lifecycle](docs/ARTIFACT_KEY_HISTORY.md)
+and [audit chain](docs/RESPONSE_AUDIT_CHAIN.md). `COLLECT_FILE` remains approved
+file metadata/hash collection; this does not add binary acquisition or an action.
+
 ## Overview
 
 `panopticon-manager` receives telemetry and enrolls endpoint agents over

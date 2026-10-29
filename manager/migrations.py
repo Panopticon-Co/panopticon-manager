@@ -348,7 +348,6 @@ def _migration_13(conn: sqlite3.Connection) -> None:
     """)
 
 
-
 def _migration_14(conn: sqlite3.Connection) -> None:
     """Canonical records are a durable detection queue, including existing rows."""
     conn.execute(
@@ -556,6 +555,224 @@ def _migration_25(conn: sqlite3.Connection) -> None:
         conn.execute(f"ALTER TABLE agent_response_channels ADD COLUMN {column} TEXT")
 
 
+def _migration_26(conn: sqlite3.Connection) -> None:
+    """Immutable command-bound collection artifacts and append-only custody."""
+    conn.execute("""CREATE TABLE response_artifacts (
+        artifact_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, command_id TEXT NOT NULL,
+        host_id TEXT NOT NULL, correlation_id TEXT NOT NULL, kind TEXT NOT NULL,
+        media_type TEXT NOT NULL, content_bytes INTEGER NOT NULL, sha256 TEXT NOT NULL,
+        manifest_digest TEXT NOT NULL, content BLOB NOT NULL, received_at TEXT NOT NULL,
+        FOREIGN KEY(command_id) REFERENCES commands(command_id))""")
+    conn.execute(
+        "CREATE INDEX ix_response_artifact_command ON response_artifacts(command_id,received_at)"
+    )
+    conn.execute("""CREATE TABLE response_artifact_usage (
+        id INTEGER PRIMARY KEY CHECK(id=1), content_bytes INTEGER NOT NULL,
+        artifacts INTEGER NOT NULL)""")
+    conn.execute("INSERT INTO response_artifact_usage VALUES (1,0,0)")
+    conn.execute("""CREATE TRIGGER response_artifact_usage_insert AFTER INSERT ON response_artifacts
+        BEGIN UPDATE response_artifact_usage SET content_bytes=content_bytes+NEW.content_bytes,
+        artifacts=artifacts+1 WHERE id=1; END""")
+    conn.execute("""CREATE TABLE response_artifact_custody (
+        artifact_id TEXT NOT NULL, sequence INTEGER NOT NULL, event TEXT NOT NULL,
+        actor TEXT NOT NULL, occurred_at TEXT NOT NULL, detail TEXT NOT NULL,
+        previous_hash TEXT NOT NULL, event_hash TEXT NOT NULL,
+        PRIMARY KEY(artifact_id,sequence),
+        FOREIGN KEY(artifact_id) REFERENCES response_artifacts(artifact_id))""")
+    conn.execute("""CREATE TRIGGER response_artifact_immutable BEFORE UPDATE ON response_artifacts
+        BEGIN SELECT RAISE(ABORT,'artifact evidence is immutable'); END""")
+    conn.execute("""CREATE TRIGGER response_artifact_custody_immutable_update
+        BEFORE UPDATE ON response_artifact_custody
+        BEGIN SELECT RAISE(ABORT,'custody evidence is append-only'); END""")
+    conn.execute("""CREATE TRIGGER response_artifact_custody_immutable_delete
+        BEFORE DELETE ON response_artifact_custody
+        BEGIN SELECT RAISE(ABORT,'custody evidence is append-only'); END""")
+
+
+def _migration_27(conn: sqlite3.Connection) -> None:
+    """Hash-chain response audit. Existing records persist legacy_import=1.
+
+    The imported snapshot is protected from this migration onward; historical
+    event authenticity is explicitly NOT inferred from its new chain entry.
+    New trigger-generated events have legacy_import=0.
+    """
+    from manager.audit_chain import install
+
+    install(conn)
+
+
+def _migration_28(conn: sqlite3.Connection) -> None:
+    """Retain artifact signing key versions and audit every identity transition."""
+    from manager.audit_chain import install_security_source
+
+    conn.execute("""CREATE TABLE response_security_audit (
+        event_id TEXT PRIMARY KEY, request_id TEXT, asset_id TEXT, event TEXT NOT NULL,
+        actor TEXT NOT NULL, detail TEXT NOT NULL, occurred_at TEXT NOT NULL)""")
+    install_security_source(conn)
+    conn.execute("""CREATE TABLE artifact_signing_keys (
+        agent_id TEXT NOT NULL REFERENCES enrolled_agents(agent_id), host_id TEXT NOT NULL,
+        key_id TEXT NOT NULL, key_version INTEGER NOT NULL CHECK(key_version>0),
+        public_key TEXT NOT NULL, valid_from TEXT NOT NULL, retired_at TEXT,
+        compromised_at TEXT, compromise_reason TEXT,
+        PRIMARY KEY(agent_id,key_id), UNIQUE(agent_id,key_version))""")
+    conn.execute("""CREATE UNIQUE INDEX ix_active_artifact_key ON artifact_signing_keys(agent_id)
+        WHERE retired_at IS NULL AND compromised_at IS NULL""")
+    conn.execute("""INSERT INTO artifact_signing_keys
+        (agent_id,host_id,key_id,key_version,public_key,valid_from,retired_at)
+        SELECT agent_id,host_id,panopticon_public_key_id(public_key),1,
+            public_key,enrolled_at,revoked_at
+        FROM enrolled_agents WHERE public_key IS NOT NULL""")
+    conn.execute("""CREATE TRIGGER artifact_key_enrollment AFTER INSERT ON enrolled_agents
+        WHEN NEW.public_key IS NOT NULL BEGIN
+        INSERT INTO artifact_signing_keys
+        (agent_id,host_id,key_id,key_version,public_key,valid_from)
+        VALUES (NEW.agent_id,NEW.host_id,panopticon_public_key_id(NEW.public_key),1,
+            NEW.public_key,NEW.enrolled_at);
+        INSERT INTO response_security_audit VALUES
+        (lower(hex(randomblob(16))),NULL,NEW.host_id,'artifact_key_enrolled',
+            'agent:' || NEW.agent_id,json_object('agent_id',NEW.agent_id,
+                'key_id',panopticon_public_key_id(NEW.public_key),'key_version',1),NEW.enrolled_at);
+        END""")
+    conn.execute("""CREATE TRIGGER artifact_key_material_immutable
+        BEFORE UPDATE ON artifact_signing_keys
+        WHEN NEW.agent_id!=OLD.agent_id OR NEW.host_id!=OLD.host_id OR NEW.key_id!=OLD.key_id
+        OR NEW.key_version!=OLD.key_version OR NEW.public_key!=OLD.public_key
+        OR NEW.valid_from!=OLD.valid_from
+        OR (OLD.retired_at IS NOT NULL AND NEW.retired_at IS NOT OLD.retired_at)
+        OR (OLD.compromised_at IS NOT NULL AND
+            (NEW.compromised_at IS NOT OLD.compromised_at
+             OR NEW.compromise_reason IS NOT OLD.compromise_reason))
+        BEGIN SELECT RAISE(ABORT,'historical artifact key identity is immutable'); END""")
+    conn.execute("""CREATE TRIGGER artifact_key_no_delete BEFORE DELETE ON artifact_signing_keys
+        BEGIN SELECT RAISE(ABORT,'historical artifact keys must be retained'); END""")
+    conn.execute("""CREATE TABLE artifact_key_rotations (
+        agent_id TEXT NOT NULL REFERENCES enrolled_agents(agent_id), request_id TEXT NOT NULL,
+        old_key_id TEXT NOT NULL, new_key_id TEXT NOT NULL, new_public_key TEXT NOT NULL,
+        payload_digest TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('PENDING','APPROVED')),
+        created_at TEXT NOT NULL, expires_at TEXT NOT NULL, approved_by TEXT, approved_at TEXT,
+        PRIMARY KEY(agent_id,request_id))""")
+    conn.execute("""CREATE TABLE artifact_identity_operations (
+        actor TEXT NOT NULL, request_id TEXT NOT NULL, payload_digest TEXT NOT NULL,
+        result_json TEXT NOT NULL, PRIMARY KEY(actor,request_id))""")
+    conn.execute("""CREATE TABLE artifact_manifest_attestations (
+        artifact_id TEXT PRIMARY KEY REFERENCES response_artifacts(artifact_id),
+        agent_id TEXT NOT NULL, key_id TEXT NOT NULL, key_version INTEGER NOT NULL,
+        manifest_json TEXT NOT NULL, verified_at TEXT NOT NULL,
+        FOREIGN KEY(agent_id,key_id) REFERENCES artifact_signing_keys(agent_id,key_id))""")
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""CREATE TRIGGER artifact_attestation_no_{operation.lower()}
+            BEFORE {operation} ON artifact_manifest_attestations
+            BEGIN SELECT RAISE(ABORT,'artifact attestation is immutable'); END""")
+
+
+def _migration_29(conn: sqlite3.Connection) -> None:
+    """Bounded resumable artifact sessions; reservations survive process restart."""
+    conn.execute("""CREATE TABLE response_artifact_transfers (
+        artifact_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, command_id TEXT NOT NULL,
+        host_id TEXT NOT NULL, manifest_json TEXT NOT NULL, manifest_sha256 TEXT NOT NULL,
+        content_bytes INTEGER NOT NULL CHECK(content_bytes BETWEEN 1 AND 1048576),
+        received_bytes INTEGER NOT NULL DEFAULT 0 CHECK(received_bytes BETWEEN 0 AND content_bytes),
+        state TEXT NOT NULL CHECK(state IN ('OPEN','COMPLETE','EXPIRED')),
+        admitted_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+        FOREIGN KEY(command_id) REFERENCES commands(command_id))""")
+    conn.execute(
+        "CREATE INDEX ix_artifact_transfer_expiry ON response_artifact_transfers(state,expires_at)"
+    )
+    conn.execute(
+        "CREATE INDEX ix_artifact_transfer_agent ON response_artifact_transfers(agent_id,state)"
+    )
+    conn.execute(
+        "CREATE INDEX ix_artifact_transfer_command ON response_artifact_transfers(command_id,state)"
+    )
+    conn.execute("""CREATE TABLE response_artifact_chunks (
+        artifact_id TEXT NOT NULL REFERENCES response_artifact_transfers(artifact_id),
+        offset INTEGER NOT NULL CHECK(offset BETWEEN 0 AND 1048575),
+        sha256 TEXT NOT NULL, content BLOB NOT NULL CHECK(length(content) BETWEEN 1 AND 65536),
+        PRIMARY KEY(artifact_id,offset))""")
+    conn.execute("""CREATE TRIGGER artifact_chunk_no_update
+        BEFORE UPDATE ON response_artifact_chunks
+        BEGIN SELECT RAISE(ABORT,'accepted artifact chunks cannot change'); END""")
+    conn.execute("""CREATE TRIGGER artifact_transfer_identity_immutable
+        BEFORE UPDATE ON response_artifact_transfers
+        WHEN NEW.artifact_id!=OLD.artifact_id OR NEW.agent_id!=OLD.agent_id
+        OR NEW.command_id!=OLD.command_id OR NEW.host_id!=OLD.host_id
+        OR NEW.manifest_json!=OLD.manifest_json OR NEW.manifest_sha256!=OLD.manifest_sha256
+        OR NEW.content_bytes!=OLD.content_bytes
+        BEGIN SELECT RAISE(ABORT,'artifact transfer identity cannot change'); END""")
+    conn.execute("""CREATE TABLE response_artifact_transfer_usage (
+        id INTEGER PRIMARY KEY CHECK(id=1),
+        reserved_bytes INTEGER NOT NULL CHECK(reserved_bytes>=0),
+        open_sessions INTEGER NOT NULL CHECK(open_sessions>=0), total_sessions INTEGER NOT NULL)""")
+    conn.execute("INSERT INTO response_artifact_transfer_usage VALUES (1,0,0,0)")
+    conn.execute("""CREATE TRIGGER artifact_transfer_usage_insert
+        AFTER INSERT ON response_artifact_transfers
+        BEGIN UPDATE response_artifact_transfer_usage SET
+            reserved_bytes=reserved_bytes
+                +CASE WHEN NEW.state='OPEN' THEN NEW.content_bytes ELSE 0 END,
+            open_sessions=open_sessions+CASE WHEN NEW.state='OPEN' THEN 1 ELSE 0 END,
+            total_sessions=total_sessions+1 WHERE id=1; END""")
+    conn.execute("""CREATE TRIGGER artifact_transfer_usage_state AFTER UPDATE OF state
+        ON response_artifact_transfers BEGIN UPDATE response_artifact_transfer_usage SET
+        reserved_bytes=reserved_bytes
+            -CASE WHEN OLD.state='OPEN' THEN OLD.content_bytes ELSE 0 END
+            +CASE WHEN NEW.state='OPEN' THEN NEW.content_bytes ELSE 0 END,
+        open_sessions=open_sessions-CASE WHEN OLD.state='OPEN' THEN 1 ELSE 0 END
+            +CASE WHEN NEW.state='OPEN' THEN 1 ELSE 0 END WHERE id=1; END""")
+    conn.execute("""CREATE TRIGGER artifact_transfer_no_delete
+        BEFORE DELETE ON response_artifact_transfers
+        BEGIN SELECT RAISE(ABORT,'artifact transfer history must be retained'); END""")
+
+
+def _migration_30(conn: sqlite3.Connection) -> None:
+    """Artifact access policy 1: explicit credential-bound scopes; no legacy grants."""
+    conn.execute("""CREATE TABLE artifact_access_grants (
+        grant_id TEXT PRIMARY KEY,
+        analyst_id TEXT NOT NULL REFERENCES analyst_credentials(analyst_id),
+        credential_digest TEXT NOT NULL, host_id TEXT NOT NULL,
+        alert_id TEXT NOT NULL REFERENCES alerts(alert_id),
+        policy_version INTEGER NOT NULL CHECK(policy_version=1),
+        granted_by TEXT NOT NULL, reason TEXT NOT NULL, created_at TEXT NOT NULL,
+        revoked_at TEXT, revoked_by TEXT, revoke_reason TEXT,
+        CHECK((revoked_at IS NULL AND revoked_by IS NULL AND revoke_reason IS NULL)
+           OR (revoked_at IS NOT NULL AND revoked_by IS NOT NULL
+               AND revoke_reason IS NOT NULL)))""")
+    conn.execute("""CREATE UNIQUE INDEX artifact_access_active
+        ON artifact_access_grants(analyst_id,credential_digest,host_id,alert_id)
+        WHERE revoked_at IS NULL""")
+    conn.execute("""CREATE TRIGGER artifact_access_identity_immutable
+        BEFORE UPDATE ON artifact_access_grants
+        WHEN NEW.grant_id!=OLD.grant_id OR NEW.analyst_id!=OLD.analyst_id
+        OR NEW.credential_digest!=OLD.credential_digest OR NEW.host_id!=OLD.host_id
+        OR NEW.alert_id!=OLD.alert_id OR NEW.policy_version!=OLD.policy_version
+        OR NEW.granted_by!=OLD.granted_by OR NEW.reason!=OLD.reason
+        OR NEW.created_at!=OLD.created_at
+        OR OLD.revoked_at IS NOT NULL OR NEW.revoked_at IS NULL
+        BEGIN SELECT RAISE(ABORT,'artifact access history is immutable'); END""")
+    conn.execute("""CREATE TRIGGER artifact_access_no_delete BEFORE DELETE ON artifact_access_grants
+        BEGIN SELECT RAISE(ABORT,'artifact access history must be retained'); END""")
+    conn.execute("""CREATE TABLE artifact_access_operations (
+        actor TEXT NOT NULL, request_id TEXT NOT NULL, payload_digest TEXT NOT NULL,
+        result_json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(actor,request_id))""")
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""CREATE TRIGGER artifact_access_operations_no_{operation.lower()}
+            BEFORE {operation} ON artifact_access_operations
+            BEGIN SELECT RAISE(ABORT,'artifact access operation is immutable'); END""")
+
+
+def _migration_31(conn: sqlite3.Connection) -> None:
+    """Idempotent analyst acknowledgements after browser evidence verification."""
+    conn.execute("""CREATE TABLE artifact_view_receipts (
+        analyst_id TEXT NOT NULL, credential_digest TEXT NOT NULL, request_id TEXT NOT NULL,
+        artifact_id TEXT NOT NULL REFERENCES response_artifacts(artifact_id),
+        manifest_sha256 TEXT NOT NULL,
+        operation TEXT NOT NULL CHECK(operation IN ('view','download')),
+        recorded_at TEXT NOT NULL, PRIMARY KEY(analyst_id,credential_digest,request_id))""")
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""CREATE TRIGGER artifact_view_no_{operation.lower()}
+            BEFORE {operation} ON artifact_view_receipts
+            BEGIN SELECT RAISE(ABORT,'artifact view history is immutable'); END""")
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -582,6 +799,12 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_23,
     _migration_24,
     _migration_25,
+    _migration_26,
+    _migration_27,
+    _migration_28,
+    _migration_29,
+    _migration_30,
+    _migration_31,
 ]
 
 
@@ -608,14 +831,29 @@ def _upgrade_lab_v13_layout(conn: sqlite3.Connection) -> None:
     if "received_at" not in columns and "raw_sha256" not in columns:
         return
     expected = {
-        "record_id", "agent_id", "host_id", "kind", "category", "observed_at",
-        "received_at", "schema_version", "raw_sha256", "raw_json",
+        "record_id",
+        "agent_id",
+        "host_id",
+        "kind",
+        "category",
+        "observed_at",
+        "received_at",
+        "schema_version",
+        "raw_sha256",
+        "raw_json",
     }
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     alert_columns = {row["name"] for row in conn.execute("PRAGMA table_info(alerts)")}
-    if columns != expected or tables & {
-        "endpoint_records_legacy_v13", "endpoint_latest", "incidents",
-    } or alert_columns & {"detection_source", "incident_id"}:
+    if (
+        columns != expected
+        or tables
+        & {
+            "endpoint_records_legacy_v13",
+            "endpoint_latest",
+            "incidents",
+        }
+        or alert_columns & {"detection_source", "incident_id"}
+    ):
         raise RuntimeError("unrecognized lab v13 layout; database left unchanged")
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -641,6 +879,9 @@ def _upgrade_lab_v13_layout(conn: sqlite3.Connection) -> None:
 
 def migrate(conn: sqlite3.Connection) -> int:
     """Apply any pending migrations in order. Returns the resulting version."""
+    from manager.audit_chain import register
+
+    register(conn)
     version = current_version(conn)
     if version > len(_MIGRATIONS):
         raise RuntimeError(

@@ -104,7 +104,7 @@ async def list_alerts(
 
 @router.get("/api/v1/alerts/{alert_id}")
 async def get_alert(alert_id: str, authorization: str | None = Header(default=None)) -> dict:
-    require_analyst_token(authorization)
+    analyst_id = require_analyst_token(authorization)
     conn = db.connect()
     row = conn.execute(
         f"SELECT {', '.join(ALERT_COLUMNS)} FROM alerts WHERE alert_id = ?", (alert_id,)
@@ -113,5 +113,5 @@ async def get_alert(alert_id: str, authorization: str | None = Header(default=No
         raise HTTPException(status_code=404, detail="no alert with that id")
     return {
         "alert": alert_row_to_dict(row),
-        "response_actions": response_actions_for_alerts(conn, [alert_id]),
+        "response_actions": response_actions_for_alerts(conn, [alert_id], analyst_id=analyst_id),
     }
