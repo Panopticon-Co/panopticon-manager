@@ -25,6 +25,19 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
+def load_console(console_dir):
+    """Load the sibling application with the same module path as its CLI entrypoint."""
+    spec = importlib.util.spec_from_file_location("response_console_lab", console_dir / "app.py")
+    console_module = importlib.util.module_from_spec(spec)
+    original_path = sys.path[:]
+    sys.path.insert(0, str(console_dir.resolve()))
+    try:
+        spec.loader.exec_module(console_module)
+    finally:
+        sys.path[:] = original_path
+    return console_module
+
+
 def verify_governance(manager, browser, console_module, manager_url, bootstrap, case_id):
     """Exercise policy and evidence through real HTTP without native execution."""
     assert browser.get("/api/analysts/me").json()["role"] == "analyst"
@@ -126,11 +139,7 @@ def main():
     from tests.test_endpoint_records import records
     from tests.test_response_actions_route import _stage_response_action
 
-    spec = importlib.util.spec_from_file_location(
-        "response_console_lab", args.console_dir / "app.py"
-    )
-    console_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(console_module)
+    console_module = load_console(args.console_dir)
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     manager_url = f"http://127.0.0.1:{sock.getsockname()[1]}"

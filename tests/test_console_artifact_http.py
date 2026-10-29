@@ -25,6 +25,23 @@ def load(path, name):
     return module
 
 
+def test_http_qualification_loads_sibling_console_dependencies_without_leaking_import_path():
+    from tools.verify_response_console import load_console
+
+    root = Path(__file__).resolve().parents[2] / "panopticon-console"
+    previous = sys.modules.pop("evidence_sessions", None)
+    original_path = sys.path[:]
+    try:
+        console = load_console(root)
+        assert console.EvidenceSessions.__module__ == "evidence_sessions"
+        assert sys.path == original_path
+        assert callable(console.build_server)
+    finally:
+        sys.modules.pop("evidence_sessions", None)
+        if previous is not None:
+            sys.modules["evidence_sessions"] = previous
+
+
 def test_individual_browser_scope_signed_frames_and_view_reach_real_manager(client, monkeypatch):
     operator, agent, _, upload, url = prepared(client, with_scope=False)
     assert client.post(url, headers=agent, json=upload).status_code == 200
