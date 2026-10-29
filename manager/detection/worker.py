@@ -17,6 +17,7 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -35,6 +36,15 @@ LEASE_SECONDS = 60
 PRUNE_EVERY_IDLE_ROUNDS = 60
 PRUNE_EVERY_EVENTS = 10_000
 IDLE_SLEEP_SECONDS = 1.0
+# A live loop beats at least once per claimed record or idle sleep; this long
+# without one means it is wedged, and readiness must say so.
+HEARTBEAT_STALE_SECONDS = 30.0
+
+
+def _is_lock_timeout(exc: BaseException) -> bool:
+    return isinstance(exc, sqlite3.OperationalError) and (
+        "locked" in str(exc) or "busy" in str(exc)
+    )
 
 
 class DetectionWorker:
@@ -51,10 +61,18 @@ class DetectionWorker:
         self._started = False
         self._idle_rounds = 0
         self._events_since_prune = 0
+        # Claimed rows whose transaction could not start (write lock timeout):
+        # nothing ran for them yet, so they are retried before claiming more.
+        self._retry_rows: list[sqlite3.Row] = []
+        self._last_revert = float("-inf")
+        self.fatal_error: str | None = None
+        self.loop_errors = 0
+        self.last_heartbeat: float | None = None
 
     # -- lifecycle -----------------------------------------------------
     def start(self) -> None:
         self._started = True
+        self._beat()  # loading the rules counts as alive until it fails
         self._thread.start()
 
     def stop(self, timeout: float = 10.0) -> None:
@@ -62,17 +80,69 @@ class DetectionWorker:
         if self._started:
             self._thread.join(timeout)
 
-    def _run(self) -> None:
-        conn = self.open_connection()
-        run, sink, writer, context = build_detection_run(
-            conn, alerts_path=self._alerts_path, rules_dir=self._rules_dir
+    def heartbeat_age(self) -> float | None:
+        if self.last_heartbeat is None:
+            return None
+        return time.monotonic() - self.last_heartbeat
+
+    def is_alive(self) -> bool:
+        """True while the thread runs, rules loaded, and the loop is not wedged."""
+        age = self.heartbeat_age()
+        return (
+            self._thread.is_alive()
+            and self.fatal_error is None
+            and age is not None
+            and age < HEARTBEAT_STALE_SECONDS
         )
+
+    def describe(self) -> dict:
+        """Liveness facts for /readyz, /metrics and /api/v1/status."""
+        age = self.heartbeat_age()
+        return {
+            "alive": self.is_alive(),
+            "fatal_error": self.fatal_error,
+            "heartbeat_age_seconds": None if age is None else round(age, 3),
+            "loop_errors": self.loop_errors,
+        }
+
+    def _beat(self) -> None:
+        self.last_heartbeat = time.monotonic()
+
+    def _run(self) -> None:
+        conn = None
+        try:
+            conn = self.open_connection()
+            run, sink, writer, context = build_detection_run(
+                conn, alerts_path=self._alerts_path, rules_dir=self._rules_dir
+            )
+        except Exception as exc:
+            # Without this the thread used to exit with no log line while
+            # ingest stayed green: events piled up and no alert ever fired.
+            self.fatal_error = f"{type(exc).__name__}: {exc}"
+            _log.exception("detection worker failed to start; nothing will be detected")
+            if conn is not None:
+                conn.close()
+            return
         _log.info("detection worker started (rules=%s)", self._rules_dir)
         try:
-            self.revert_stale_claims(conn)
             while not self._stop.is_set():
-                claimed = self.run_once(conn, run, sink)
-                self.maybe_prune(context, claimed)
+                self._beat()
+                claimed = 0
+                try:
+                    if time.monotonic() - self._last_revert >= LEASE_SECONDS:
+                        self.revert_stale_claims(conn)
+                        self._last_revert = time.monotonic()
+                    claimed = self.run_once(conn, run, sink)
+                    self.maybe_prune(context, claimed)
+                except Exception:
+                    # One bad cycle (e.g. the write lock held past busy_timeout)
+                    # must not end detection for the life of the process.
+                    self.loop_errors += 1
+                    _log.exception("detection cycle failed; retrying")
+                    try:
+                        conn.rollback()
+                    except sqlite3.Error:
+                        pass
                 if claimed == 0:
                     self._stop.wait(IDLE_SLEEP_SECONDS)
         finally:
@@ -200,8 +270,10 @@ class DetectionWorker:
     def process_claimed(self, conn, run, sink, rows: list[sqlite3.Row]) -> None:
         """Run each claimed event through the engine. A failure on one event
         marks that one ``failed`` and moves on — it never breaks the loop."""
-        for row in rows:
+        for index, row in enumerate(rows):
+            self._beat()
             event_id = row["event_id"]
+            began = False
             try:
                 event = self._normalize(row["raw_json"])
                 sink.agent_id = row["agent_id"]
@@ -218,6 +290,7 @@ class DetectionWorker:
                     }
                     sink.linux_context["provenance"] = raw.get("provenance", {})
                 conn.execute("BEGIN IMMEDIATE")
+                began = True
                 run.process_event(event)  # emit -> insert_alert + alerts.ndjson
                 if row["queue"] == "endpoint":
                     conn.execute(
@@ -236,7 +309,16 @@ class DetectionWorker:
                         "UPDATE events SET detect_state='done' WHERE event_id=?", (event_id,)
                     )
                 conn.commit()
-            except Exception:
+            except Exception as exc:
+                if not began and _is_lock_timeout(exc):
+                    # Another writer held the lock past busy_timeout before this
+                    # record ran: it is not poison. Keep it and the rest of the
+                    # batch claimed, and retry them first on the next cycle.
+                    self._retry_rows = list(rows[index:])
+                    _log.warning(
+                        "write lock busy; retrying %d claimed record(s)", len(self._retry_rows)
+                    )
+                    return
                 self._mark_failed(conn, event_id, agent_id=row["agent_id"], queue=row["queue"])
 
     def maybe_prune(self, context, claimed: int) -> dict[str, int] | None:
@@ -268,7 +350,7 @@ class DetectionWorker:
 
     def run_once(self, conn: sqlite3.Connection, run, sink) -> int:
         """One claim + process cycle. Returns the number of events claimed."""
-        rows = self.claim_batch(conn)
+        rows, self._retry_rows = self._retry_rows or self.claim_batch(conn), []
         if rows:
             self.process_claimed(conn, run, sink, rows)
         return len(rows)

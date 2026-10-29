@@ -353,3 +353,103 @@ def test_same_timestamp_events_are_processed_in_arrival_order(tmp_path: Path) ->
         writer.close()
     assert seen == [first, second]
     conn.close()
+
+
+# -- liveness: the worker must never die silently -------------------------
+
+
+def _wait(predicate, timeout: float = 10.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
+
+
+def test_unloadable_rules_report_a_fatal_error_instead_of_a_silent_exit(tmp_path: Path) -> None:
+    db = tmp_path / "p.db"
+    _migrate(db)
+    w = DetectionWorker(
+        db_path=db, alerts_path=tmp_path / "alerts.ndjson", rules_dir=tmp_path / "no-such-rules"
+    )
+    w.start()
+    try:
+        assert _wait(lambda: w.fatal_error is not None)
+        assert not w.is_alive()
+        assert "no-such-rules" in w.fatal_error
+    finally:
+        w.stop()
+
+
+def test_a_failing_cycle_is_logged_and_the_loop_keeps_detecting(tmp_path: Path) -> None:
+    from tests.conftest import FIXTURE_RULES_DIR
+
+    db = tmp_path / "p.db"
+    _migrate(db)
+    w = DetectionWorker(
+        db_path=db, alerts_path=tmp_path / "alerts.ndjson", rules_dir=FIXTURE_RULES_DIR
+    )
+    real_claim = w.claim_batch
+    calls = {"n": 0}
+
+    def locked_once(conn):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return real_claim(conn)
+
+    w.claim_batch = locked_once  # type: ignore[method-assign]
+    conn = _open(db)
+    _seed(conn, _raw_whoami(_evt_id("e")))
+    w.start()
+    try:
+        assert _wait(
+            lambda: conn.execute("SELECT detect_state FROM events").fetchone()[0] == "done"
+        )
+        assert w.is_alive()
+        assert w.loop_errors == 1
+        assert w.fatal_error is None
+    finally:
+        w.stop()
+        conn.close()
+    assert not w.is_alive()
+
+
+def test_write_lock_timeout_retries_the_record_instead_of_poisoning_it(tmp_path: Path) -> None:
+    """Ingest holds BEGIN IMMEDIATE for a whole batch; a detection that times
+    out waiting for that lock has run nothing yet and must not be marked failed."""
+    from tests.conftest import FIXTURE_RULES_DIR
+
+    db = tmp_path / "p.db"
+    _migrate(db)
+    seed = _open(db)
+    _seed(seed, _raw_whoami(_evt_id("1"), pid=21))
+    _seed(seed, _raw_whoami(_evt_id("2"), pid=22))
+
+    w = DetectionWorker(
+        db_path=db, alerts_path=tmp_path / "alerts.ndjson", rules_dir=FIXTURE_RULES_DIR
+    )
+    conn = w.open_connection()
+    conn.execute("PRAGMA busy_timeout=50")
+    run, sink, writer, _context = build_detection_run(
+        conn, alerts_path=tmp_path / "alerts.ndjson", rules_dir=FIXTURE_RULES_DIR
+    )
+    try:
+        rows = w.claim_batch(conn)
+        assert len(rows) == 2
+        seed.execute("BEGIN IMMEDIATE")  # another writer (ingest) holds the lock
+        w.process_claimed(conn, run, sink, rows)
+        seed.rollback()
+        states = dict(seed.execute("SELECT event_id, detect_state FROM events"))
+        assert set(states.values()) == {"claimed"}
+        assert seed.execute("SELECT MAX(detect_attempts) FROM events").fetchone()[0] == 0
+
+        assert w.run_once(conn, run, sink) == 2  # retried, not re-claimed
+        states = dict(seed.execute("SELECT event_id, detect_state FROM events"))
+        assert set(states.values()) == {"done"}
+        assert seed.execute("SELECT COUNT(*) FROM alerts").fetchone()[0] == 2
+    finally:
+        writer.close()
+        conn.close()
+        seed.close()

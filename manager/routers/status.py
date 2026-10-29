@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, Request
 
 from manager import db
 from manager.auth import require_analyst_token
+from manager.routers.health import worker_health
 
 router = APIRouter()
 
@@ -16,12 +17,18 @@ _OPEN_INCIDENT_STATES = ("open", "investigating")
 
 
 @router.get("/api/v1/status")
-async def status(authorization: str | None = Header(default=None)) -> dict:
+async def status(request: Request, authorization: str | None = Header(default=None)) -> dict:
     require_analyst_token(authorization)
     conn = db.connect()
     events = dict.fromkeys(_DETECT_STATES, 0)
     for row in conn.execute("SELECT detect_state, COUNT(*) AS c FROM events GROUP BY 1"):
         events[row["detect_state"]] = row["c"]
+    # The Windows agent's canonical records land here, not in ``events``.
+    endpoint_records = dict.fromkeys(_DETECT_STATES, 0)
+    for row in conn.execute(
+        "SELECT detect_state, COUNT(*) AS c FROM endpoint_records GROUP BY 1"
+    ):
+        endpoint_records[row["detect_state"]] = row["c"]
     incidents = {
         row["status"]: row["c"]
         for row in conn.execute("SELECT status, COUNT(*) AS c FROM incidents GROUP BY 1")
@@ -44,4 +51,9 @@ async def status(authorization: str | None = Header(default=None)) -> dict:
         "last_event_at": conn.execute(
             "SELECT MAX(event_timestamp) AS t FROM events"
         ).fetchone()["t"],
+        "endpoint_records": endpoint_records,
+        "last_record_at": conn.execute(
+            "SELECT MAX(ingested_at) AS t FROM endpoint_records"
+        ).fetchone()["t"],
+        "detection_worker": worker_health(request),
     }

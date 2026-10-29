@@ -42,3 +42,6 @@ Desktop.ini
 .venv/
 demo-tls/
 demo-data/
+
+# tools/demo_up.sh state: DB, alerts, tokens, logs, pids. Never commit.
+/demo-state/

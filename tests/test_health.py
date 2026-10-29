@@ -58,3 +58,43 @@ def test_metrics_reports_permanently_failed_events(client: TestClient) -> None:
     resp = client.get("/metrics")
     assert resp.status_code == 200
     assert _gauge_value(resp.text, "panopticon_events_failed") == baseline + 1
+
+
+def test_readyz_fails_when_the_detection_worker_is_dead(client: TestClient) -> None:
+    # Ingest can stay green while nothing is detected; readiness must not.
+    worker = client.app.state.detection_worker
+    assert client.get("/readyz").status_code == 200
+    assert _gauge_value(client.get("/metrics").text, "panopticon_detection_worker_up") == 1
+
+    worker.fatal_error = "RuleValidationError: simulated"
+    resp = client.get("/readyz")
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["status"] == "not_ready"
+    assert body["reason"] == "detection worker not alive"
+    assert body["fatal_error"] == "RuleValidationError: simulated"
+    assert _gauge_value(client.get("/metrics").text, "panopticon_detection_worker_up") == 0
+
+
+def test_status_reports_canonical_queue_and_worker(client: TestClient) -> None:
+    from manager import db
+    from tests.test_response_actions_route import _enroll_analyst
+
+    h = {"Authorization": "Bearer " + _enroll_analyst(client, "alice")}
+    conn = db.connect()
+    for record_id, state in (("rec_" + "1" * 64, "done"), ("rec_" + "2" * 64, "pending")):
+        conn.execute(
+            "INSERT INTO endpoint_records (agent_id, host_id, record_id, kind, category, "
+            "observed_at, ingested_at, payload_digest, raw_json, detect_state) "
+            "VALUES ('agent-1','host-1',?,'observation','process',"
+            "'2026-10-30T10:00:00.000Z','2026-10-30T10:00:01.000Z','d','{}',?)",
+            (record_id, state),
+        )
+    conn.commit()
+
+    body = client.get("/api/v1/status", headers=h).json()
+    assert body["endpoint_records"] == {"pending": 1, "claimed": 0, "done": 1, "failed": 0}
+    assert body["last_record_at"] == "2026-10-30T10:00:01.000Z"
+    assert body["detection_worker"]["alive"] is True
+    assert body["detection_worker"]["fatal_error"] is None
+    assert body["detection_worker"]["loop_errors"] == 0
