@@ -23,6 +23,7 @@ from response_engine.contract import Action, Command, CommandResult
 
 from manager import command_signing, db
 from manager.auth import require_agent_token
+from manager.response_profile import current_profile, delivery_predicate, parse_header, policy_block
 from manager.timeutil import iso_now
 
 router = APIRouter()
@@ -77,6 +78,10 @@ def authorize_and_enqueue(
         ).fetchone()
         if enrolled is None:
             raise HTTPException(status_code=422, detail="target agent is not enrolled")
+        profile = current_profile(conn, command.agent_id, enrolled["host_id"])
+        blocker = policy_block(profile, command.action, command.target)
+        if blocker:
+            raise HTTPException(409, blocker)
         payload = command.model_dump(mode="json")
         if command.schema_version == "2":
             payload["expires_at"] = command.expires_at.astimezone(timezone.utc).isoformat()
@@ -169,32 +174,66 @@ async def poll(
     authorization: str | None = Header(default=None),
     delivery_mode: Literal["single", "durable"] = "single",
     command_auth: Literal["ES256"] | None = None,
+    x_panopticon_response_profile: str | None = Header(default=None),
 ) -> dict:
     require_agent_token(agent_id, authorization)
+    profile = parse_header(x_panopticon_response_profile)
     conn = db.connect()
     now = datetime.now(timezone.utc).isoformat()
     conn.execute("BEGIN IMMEDIATE")
     try:
+        require_agent_token(agent_id, authorization)
+        enrolled = conn.execute(
+            "SELECT host_id FROM enrolled_agents WHERE agent_id=? AND revoked_at IS NULL",
+            (agent_id,),
+        ).fetchone()
+        if enrolled is None or (profile and profile["host_id"] != enrolled["host_id"]):
+            raise HTTPException(403, "runtime profile disagrees with active host enrollment")
         _expire_stale_commands(conn, now)
         conn.execute(
             "INSERT INTO agent_response_channels "
-            "(agent_id,last_polled_at,delivery_mode,command_auth) "
-            "VALUES (?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET "
+            "(agent_id,last_polled_at,delivery_mode,command_auth,"
+            "profile_json,profile_observed_at,profile_host_id) "
+            "VALUES (?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET "
             "last_polled_at=excluded.last_polled_at,"
             "delivery_mode=excluded.delivery_mode,"
-            "command_auth=COALESCE(excluded.command_auth,agent_response_channels.command_auth)",
-            (agent_id, now, delivery_mode, command_auth),
+            "command_auth=COALESCE(excluded.command_auth,agent_response_channels.command_auth),"
+            "profile_json=excluded.profile_json,profile_observed_at=excluded.profile_observed_at,"
+            "profile_host_id=excluded.profile_host_id",
+            (
+                agent_id,
+                now,
+                delivery_mode,
+                "ES256" if profile and profile["require_signature"] else command_auth,
+                json.dumps(profile) if profile else None,
+                now if profile else None,
+                enrolled["host_id"] if profile else None,
+            ),
         )
+        if profile and profile["require_signature"] and command_auth != "ES256":
+            conn.commit()
+            raise HTTPException(409, "signature-requiring runtime must negotiate ES256 delivery")
         eligibility = (
             "lifecycle_state IN ('AUTHORIZED','DISPATCHED')"
             if delivery_mode == "durable"
             else "delivered_at IS NULL AND lifecycle_state = 'AUTHORIZED'"
         )
+        observed_profile = current_profile(conn, agent_id, enrolled["host_id"])
+        policy_sql, policy_args = delivery_predicate(observed_profile)
         rows = conn.execute(
             "SELECT command_id, command_json FROM commands WHERE agent_id = ? "
-            f"AND {eligibility} AND expires_at > ? ORDER BY created_at LIMIT 32",
-            (agent_id, now),
+            f"AND {eligibility} AND expires_at > ? AND ({policy_sql}) ORDER BY created_at LIMIT 32",
+            (agent_id, now, *policy_args),
         ).fetchall()
+        rows = [
+            row
+            for row in rows
+            if not policy_block(
+                observed_profile,
+                json.loads(row["command_json"])["action"],
+                json.loads(row["command_json"])["target"],
+            )
+        ]
         queued_commands = [json.loads(str(row["command_json"])) for row in rows]
         if command_auth == "ES256" and any("authorization" not in c for c in queued_commands):
             # Preserve the authenticated channel observation without claiming dispatch.

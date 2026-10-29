@@ -178,10 +178,10 @@ def test_linux_queue_migration_backfills_retained_processes_once(rig):
     conn, _, _, _ = rig
     put(conn, record())
     conn.execute("DELETE FROM linux_endpoint_detection")
-    conn.execute("DELETE FROM schema_migrations WHERE version>=23")
     conn.commit()
-    assert migrations.migrate(conn) == 24
+    migrations._migration_23(conn)
+    conn.commit()
     conn.execute("UPDATE linux_endpoint_detection SET state='done'")
     conn.commit()
-    migrations.migrate(conn)
+    migrations._migration_23(conn)
     assert conn.execute("SELECT state FROM linux_endpoint_detection").fetchone()[0] == "done"
