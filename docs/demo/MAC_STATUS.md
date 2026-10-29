@@ -81,6 +81,10 @@ Only the Mac session edits this file. The Windows session reports back in
    - `pending` during the first 10 minutes;
    - DB growth per 10 minutes;
    - whether Defender blocked certutil.
-2. Export the `raw_json` of the trigger records (`SELECT raw_json FROM endpoint_records
+2. Note whether one trigger produces **two** alerts for the same rule. The agent reports a
+   process start from both ETW and Sysmon with different identities, so a single
+   `whoami /priv` can appear twice. That is expected behavior, not a bug, but the presenter
+   should know before the audience sees it. Record it in `WINDOWS_STATUS.md`.
+3. Export the `raw_json` of the trigger records (`SELECT raw_json FROM endpoint_records
    WHERE ...`) to `docs/demo/captures/` so the Mac can add them as a real-telemetry
    regression fixture.
