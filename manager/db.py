@@ -36,5 +36,8 @@ def connect() -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.row_factory = sqlite3.Row
+    from manager.audit_chain import register
+
+    register(conn)
     _local.conn = conn
     return conn

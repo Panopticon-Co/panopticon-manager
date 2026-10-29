@@ -42,6 +42,7 @@ from manager.detection.response import (
     reject_response_action,
 )
 from manager.linux_response_evidence import command_evidence
+from manager.response_artifacts import manifests
 from manager.response_audit import record_decision
 from manager.response_profile import current_profile, policy_block
 from manager.response_readiness import channel_readiness, response_preflight
@@ -169,6 +170,7 @@ def _with_command_audit(conn: sqlite3.Connection, rows, *, full_history=False) -
         record["host_id"] = row["host_id"]
         record["expires_at"] = row["expires_at"]
         record["command"] = json.loads(row["command_json"]) if row["command_json"] else None
+        record["artifacts"] = manifests(conn, row["command_id"], full_history=full_history)
         record["dispatch_blocker"] = None
         record["endpoint_evidence"] = []
         record["results"] = []

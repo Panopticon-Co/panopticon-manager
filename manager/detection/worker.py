@@ -89,6 +89,9 @@ class DetectionWorker:
         conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.row_factory = sqlite3.Row
+        from manager.audit_chain import register
+
+        register(conn)
         return conn
 
     # -- steps (separately testable) --------------------------------

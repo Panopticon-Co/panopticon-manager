@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from manager import config, db, migrations
+from manager import audit_chain, config, db, migrations
 from manager.detection.worker import DetectionWorker
 from manager.routers import (
     alerts,
@@ -24,6 +24,8 @@ from manager.routers import (
     ingest,
     linux_endpoint,
     response_actions,
+    response_artifacts,
+    response_audit,
     status,
 )
 
@@ -33,6 +35,7 @@ async def _lifespan(app: FastAPI):
     cfg = config.load()
     db.configure(cfg.db_path)
     migrations.migrate(db.connect())
+    audit_chain.verify(db.connect())
 
     worker = DetectionWorker(
         db_path=cfg.db_path,
@@ -55,6 +58,8 @@ app.include_router(linux_endpoint.router)
 app.include_router(enrollment.router)
 app.include_router(commands.router)
 app.include_router(response_actions.router)
+app.include_router(response_artifacts.router)
+app.include_router(response_audit.router)
 app.include_router(alerts.router)
 app.include_router(incidents.router)
 app.include_router(status.router)

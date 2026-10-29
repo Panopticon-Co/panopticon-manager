@@ -348,7 +348,6 @@ def _migration_13(conn: sqlite3.Connection) -> None:
     """)
 
 
-
 def _migration_14(conn: sqlite3.Connection) -> None:
     """Canonical records are a durable detection queue, including existing rows."""
     conn.execute(
@@ -556,6 +555,52 @@ def _migration_25(conn: sqlite3.Connection) -> None:
         conn.execute(f"ALTER TABLE agent_response_channels ADD COLUMN {column} TEXT")
 
 
+def _migration_26(conn: sqlite3.Connection) -> None:
+    """Immutable command-bound collection artifacts and append-only custody."""
+    conn.execute("""CREATE TABLE response_artifacts (
+        artifact_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, command_id TEXT NOT NULL,
+        host_id TEXT NOT NULL, correlation_id TEXT NOT NULL, kind TEXT NOT NULL,
+        media_type TEXT NOT NULL, content_bytes INTEGER NOT NULL, sha256 TEXT NOT NULL,
+        manifest_digest TEXT NOT NULL, content BLOB NOT NULL, received_at TEXT NOT NULL,
+        FOREIGN KEY(command_id) REFERENCES commands(command_id))""")
+    conn.execute(
+        "CREATE INDEX ix_response_artifact_command ON response_artifacts(command_id,received_at)"
+    )
+    conn.execute("""CREATE TABLE response_artifact_usage (
+        id INTEGER PRIMARY KEY CHECK(id=1), content_bytes INTEGER NOT NULL,
+        artifacts INTEGER NOT NULL)""")
+    conn.execute("INSERT INTO response_artifact_usage VALUES (1,0,0)")
+    conn.execute("""CREATE TRIGGER response_artifact_usage_insert AFTER INSERT ON response_artifacts
+        BEGIN UPDATE response_artifact_usage SET content_bytes=content_bytes+NEW.content_bytes,
+        artifacts=artifacts+1 WHERE id=1; END""")
+    conn.execute("""CREATE TABLE response_artifact_custody (
+        artifact_id TEXT NOT NULL, sequence INTEGER NOT NULL, event TEXT NOT NULL,
+        actor TEXT NOT NULL, occurred_at TEXT NOT NULL, detail TEXT NOT NULL,
+        previous_hash TEXT NOT NULL, event_hash TEXT NOT NULL,
+        PRIMARY KEY(artifact_id,sequence),
+        FOREIGN KEY(artifact_id) REFERENCES response_artifacts(artifact_id))""")
+    conn.execute("""CREATE TRIGGER response_artifact_immutable BEFORE UPDATE ON response_artifacts
+        BEGIN SELECT RAISE(ABORT,'artifact evidence is immutable'); END""")
+    conn.execute("""CREATE TRIGGER response_artifact_custody_immutable_update
+        BEFORE UPDATE ON response_artifact_custody
+        BEGIN SELECT RAISE(ABORT,'custody evidence is append-only'); END""")
+    conn.execute("""CREATE TRIGGER response_artifact_custody_immutable_delete
+        BEFORE DELETE ON response_artifact_custody
+        BEGIN SELECT RAISE(ABORT,'custody evidence is append-only'); END""")
+
+
+def _migration_27(conn: sqlite3.Connection) -> None:
+    """Hash-chain response audit. Existing records persist legacy_import=1.
+
+    The imported snapshot is protected from this migration onward; historical
+    event authenticity is explicitly NOT inferred from its new chain entry.
+    New trigger-generated events have legacy_import=0.
+    """
+    from manager.audit_chain import install
+
+    install(conn)
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -582,6 +627,8 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_23,
     _migration_24,
     _migration_25,
+    _migration_26,
+    _migration_27,
 ]
 
 
@@ -608,14 +655,29 @@ def _upgrade_lab_v13_layout(conn: sqlite3.Connection) -> None:
     if "received_at" not in columns and "raw_sha256" not in columns:
         return
     expected = {
-        "record_id", "agent_id", "host_id", "kind", "category", "observed_at",
-        "received_at", "schema_version", "raw_sha256", "raw_json",
+        "record_id",
+        "agent_id",
+        "host_id",
+        "kind",
+        "category",
+        "observed_at",
+        "received_at",
+        "schema_version",
+        "raw_sha256",
+        "raw_json",
     }
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     alert_columns = {row["name"] for row in conn.execute("PRAGMA table_info(alerts)")}
-    if columns != expected or tables & {
-        "endpoint_records_legacy_v13", "endpoint_latest", "incidents",
-    } or alert_columns & {"detection_source", "incident_id"}:
+    if (
+        columns != expected
+        or tables
+        & {
+            "endpoint_records_legacy_v13",
+            "endpoint_latest",
+            "incidents",
+        }
+        or alert_columns & {"detection_source", "incident_id"}
+    ):
         raise RuntimeError("unrecognized lab v13 layout; database left unchanged")
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -641,6 +703,9 @@ def _upgrade_lab_v13_layout(conn: sqlite3.Connection) -> None:
 
 def migrate(conn: sqlite3.Connection) -> int:
     """Apply any pending migrations in order. Returns the resulting version."""
+    from manager.audit_chain import register
+
+    register(conn)
     version = current_version(conn)
     if version > len(_MIGRATIONS):
         raise RuntimeError(
