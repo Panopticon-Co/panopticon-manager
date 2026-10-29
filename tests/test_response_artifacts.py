@@ -8,15 +8,26 @@ from pathlib import Path
 
 import jsonschema
 import pytest
+from response_engine.artifacts import FIELDS
 
-from manager import db
+from manager import command_signing, db
 from manager.response_artifacts import canonical
 from tests.artifact_access_support import grant_reader
-from tests.test_analyst_operations import create, setup
+from tests.test_analyst_operations import create
+from tests.test_artifact_keys import enrolled
+from tests.test_response_actions_route import _enroll_analyst, _stage_response_action
 
 
 def prepared(client, *, dispatch=True):
-    analyst, agent = setup(client)
+    private, agent = enrolled(client)
+    client.artifact_signer = command_signing.CommandSigner(private)
+    client.artifact_signatures = {}
+    analyst = {"Authorization": "Bearer " + _enroll_analyst(client, "alice")}
+    _stage_response_action("agent-1", "alert-1", action="ISOLATE_HOST")
+    conn = db.connect()
+    conn.execute("UPDATE response_actions SET lifecycle_state='REJECTED'")
+    conn.execute("UPDATE alerts SET host_id='host-1'")
+    conn.commit()
     rid = create(client, analyst).json()["response_id"]
     assert (
         client.post(f"/api/v1/response-actions/{rid}/authorize", headers=analyst).status_code == 200
@@ -49,10 +60,24 @@ def artifact(command, data=b'{"connections": []}', **changes):
 
 
 def upload(client, agent, command, value):
+    # Sign even deliberately malformed test fields, so server validation rather
+    # than the fixture helper decides whether the closed envelope is acceptable.
+    manifest = {k: v for k, v in value.items() if k != "content_base64"}
+    manifest.update(schema_version="2", agent_id="agent-1", produced_at_unix=1793232000)
+    manifest["authorization"] = {"algorithm": "ES256", "key_id": client.artifact_signer.key_id}
+    fields = {**manifest, **manifest["authorization"]}
+    data = bytearray(b"panopticon-response-artifact-auth/2\n")
+    for field in FIELDS:
+        raw = str(fields[field]).encode()
+        data.extend(field.encode() + b":" + str(len(raw)).encode() + b":" + raw + b"\n")
+    cache_key = canonical(manifest)
+    if cache_key not in client.artifact_signatures:
+        client.artifact_signatures[cache_key] = client.artifact_signer.sign_bytes(bytes(data))
+    manifest["authorization"] = client.artifact_signatures[cache_key]
     return client.post(
-        f"/api/v1/agents/agent-1/commands/{command['command_id']}/artifacts",
+        f"/api/v1/agents/agent-1/commands/{command['command_id']}/artifacts/signed",
         headers=agent,
-        json=value,
+        json={"manifest": manifest, "content_base64": value["content_base64"]},
     )
 
 
@@ -70,7 +95,7 @@ def test_exact_bytes_retry_identity_case_manifest_and_download_custody(client):
     assert upload(client, agent, command, value).json() == first.json()
     conn = db.connect()
     assert conn.execute("SELECT COUNT(*) FROM response_artifacts").fetchone()[0] == 1
-    assert conn.execute("SELECT COUNT(*) FROM response_artifact_custody").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM response_artifact_custody").fetchone()[0] == 5
     rows = client.get("/api/v1/response-actions", headers=analyst).json()["response_actions"]
     case = next(row for row in rows if row["response_id"] == rid)
     assert case["artifacts"][0]["sha256"] == hashlib.sha256(data).hexdigest()
@@ -78,12 +103,21 @@ def test_exact_bytes_retry_identity_case_manifest_and_download_custody(client):
     path = f"/api/v1/response-artifacts/{value['artifact_id']}/content"
     assert client.get(path, headers=agent).status_code == 401
     downloaded = client.get(path, headers=analyst)
-    assert downloaded.status_code == 200 and downloaded.content == data
+    assert downloaded.status_code == 200
+    assert base64.b64decode(downloaded.json()["content_base64"]) == data
+    assert downloaded.json()["manifest"]["authorization"]["algorithm"] == "ES256"
     assert downloaded.headers["x-content-type-options"] == "nosniff"
     assert downloaded.headers["content-disposition"].startswith("attachment;")
     assert downloaded.headers["cache-control"] == "no-store"
     events = client.get(path.replace("/content", "/custody"), headers=analyst).json()["events"]
-    assert [event["event"] for event in events] == ["received", "download_requested"]
+    assert [event["event"] for event in events] == [
+        "received",
+        "artifact_produced",
+        "artifact_transferred",
+        "artifact_signature_verified",
+        "artifact_hash_verified",
+        "download_requested",
+    ]
     previous = "0" * 64
     for event in events:
         digest = event.pop("event_hash")
@@ -91,7 +125,7 @@ def test_exact_bytes_retry_identity_case_manifest_and_download_custody(client):
         assert hashlib.sha256(canonical(event).encode()).hexdigest() == digest
         previous = digest
     exported = client.get(f"/api/v1/response-actions/{rid}/export", headers=analyst).json()
-    assert exported["response_action"]["artifacts"][0]["custody_count"] == 2
+    assert exported["response_action"]["artifacts"][0]["custody_count"] == 6
 
 
 @pytest.mark.parametrize(
@@ -153,7 +187,7 @@ def test_changed_retry_preserves_first_original_and_custody(client):
     assert upload(client, agent, command, changed).status_code == 409
     row = db.connect().execute("SELECT content FROM response_artifacts").fetchone()
     assert bytes(row[0]) == base64.b64decode(first["content_base64"])
-    assert db.connect().execute("SELECT COUNT(*) FROM response_artifact_custody").fetchone()[0] == 1
+    assert db.connect().execute("SELECT COUNT(*) FROM response_artifact_custody").fetchone()[0] == 5
 
 
 def test_quotas_refuse_new_bytes_without_evicting_evidence(client, monkeypatch):
@@ -191,7 +225,7 @@ def test_body_and_concurrent_admission_are_bounded(client):
     from manager.routers.response_artifacts import _upload_slots
 
     _, agent, _, command = prepared(client)
-    path = f"/api/v1/agents/agent-1/commands/{command['command_id']}/artifacts"
+    path = f"/api/v1/agents/agent-1/commands/{command['command_id']}/artifacts/signed"
     assert (
         client.post(
             path,
@@ -226,7 +260,8 @@ def test_originals_and_custody_are_append_only(client):
     path = f"/api/v1/response-artifacts/{value['artifact_id']}/custody"
     first = client.get(path + "?limit=1", headers=analyst).json()
     assert first["next_after"] == 1 and len(first["events"]) == 1
-    assert client.get(path + "?after=1", headers=analyst).json()["events"] == []
+    assert len(client.get(path + "?after=1", headers=analyst).json()["events"]) == 4
+    assert client.get(path + "?after=5", headers=analyst).json()["events"] == []
     assert (
         client.get(path + "?after=99999999999999999999999999", headers=analyst).status_code == 422
     )
@@ -248,7 +283,14 @@ def test_corrupt_storage_is_not_served_and_records_integrity_failure(client):
     events = conn.execute(
         "SELECT event FROM response_artifact_custody ORDER BY sequence"
     ).fetchall()
-    assert [row[0] for row in events] == ["received", "integrity_check_failed"]
+    assert [row[0] for row in events] == [
+        "received",
+        "artifact_produced",
+        "artifact_transferred",
+        "artifact_signature_verified",
+        "artifact_hash_verified",
+        "integrity_check_failed",
+    ]
 
 
 def test_artifact_matches_central_contract():

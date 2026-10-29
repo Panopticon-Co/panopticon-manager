@@ -759,6 +759,20 @@ def _migration_30(conn: sqlite3.Connection) -> None:
             BEGIN SELECT RAISE(ABORT,'artifact access operation is immutable'); END""")
 
 
+def _migration_31(conn: sqlite3.Connection) -> None:
+    """Idempotent analyst acknowledgements after browser evidence verification."""
+    conn.execute("""CREATE TABLE artifact_view_receipts (
+        analyst_id TEXT NOT NULL, credential_digest TEXT NOT NULL, request_id TEXT NOT NULL,
+        artifact_id TEXT NOT NULL REFERENCES response_artifacts(artifact_id),
+        manifest_sha256 TEXT NOT NULL,
+        operation TEXT NOT NULL CHECK(operation IN ('view','download')),
+        recorded_at TEXT NOT NULL, PRIMARY KEY(analyst_id,credential_digest,request_id))""")
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""CREATE TRIGGER artifact_view_no_{operation.lower()}
+            BEFORE {operation} ON artifact_view_receipts
+            BEGIN SELECT RAISE(ABORT,'artifact view history is immutable'); END""")
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -790,6 +804,7 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_28,
     _migration_29,
     _migration_30,
+    _migration_31,
 ]
 
 

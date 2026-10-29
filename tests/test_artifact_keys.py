@@ -228,10 +228,9 @@ def test_compromise_blocks_acceptance_and_status_is_queryable_without_key_deleti
 
 
 def test_compromised_retained_artifact_is_flagged_and_preserved(client):
-    from response_engine.artifacts import artifact_signing_input
-
     from manager import command_signing
     from manager.response_artifacts import manifests
+    from tests.artifact_access_support import grant_reader
     from tests.test_analyst_operations import create
     from tests.test_response_actions_route import _stage_response_action
     from tests.test_response_artifacts import artifact, upload
@@ -250,35 +249,17 @@ def test_compromised_retained_artifact_is_flagged_and_preserved(client):
     )
     command = client.get("/api/v1/agents/agent-1/commands", headers=agent).json()["commands"][0]
     value = artifact(command)
+    client.artifact_signer = command_signing.CommandSigner(private)
+    client.artifact_signatures = {}
+    grant_reader(client, operator)
     assert upload(client, agent, command, value).status_code == 200
-    manifest = {k: v for k, v in value.items() if k != "content_base64"}
-    manifest.update(
-        schema_version="2",
-        agent_id="agent-1",
-        produced_at_unix=1,
-        authorization={
-            "algorithm": "ES256",
-            "key_id": keys.public_key_id(point(private)),
-            "signature": base64.b64encode(bytes(64)).decode(),
-        },
-    )
-    manifest["authorization"] = command_signing.CommandSigner(private).sign_bytes(
-        artifact_signing_input(manifest)
+    manifest = json.loads(
+        conn.execute(
+            "SELECT manifest_json FROM artifact_manifest_attestations WHERE artifact_id=?",
+            (value["artifact_id"],),
+        ).fetchone()[0]
     )
     keys.verify_manifest(conn, "agent-1", manifest)
-    # Retained-attestation fixture; transfer integration is tested separately.
-    conn.execute(
-        "INSERT INTO artifact_manifest_attestations VALUES (?,?,?,?,?,?)",
-        (
-            value["artifact_id"],
-            "agent-1",
-            manifest["authorization"]["key_id"],
-            1,
-            audit_chain.canonical(manifest),
-            "2026-10-29T00:00:00Z",
-        ),
-    )
-    conn.commit()
     assert manifests(conn, command["command_id"])[0]["signing"]["trust_status"] == "active_key"
     original = bytes(conn.execute("SELECT content FROM response_artifacts").fetchone()[0])
     result = client.post(

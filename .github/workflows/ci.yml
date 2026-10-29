@@ -32,7 +32,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Panopticon-Co/panopticon-contracts
-          ref: "fb8562effbbe32ab8902a4451855a737eca4aa63"
+          ref: "b66a741efcb1c1cbffc9bb44dbf1f97fc0fa2849"
           path: _panopticon-contracts-checkout
 
       - name: Move panopticon-contracts to sibling path
@@ -42,7 +42,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Panopticon-Co/panopticon-console
-          ref: 8bee7d1f2c520c209385071fa690abeec320d104
+          ref: "63c38b79e84af6917a06591103cc8f0a1aa36f5c"
           path: _response-console-checkout
 
       - name: Move Console to sibling path (separate repository lint policy)
