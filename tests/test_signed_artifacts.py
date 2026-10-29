@@ -14,8 +14,8 @@ from tests.test_response_actions_route import _stage_response_action
 from tests.test_response_artifacts import artifact
 
 
-def prepared(client):
-    private, agent = enrolled(client)
+def prepared(client, *, data=None, key=None):
+    private, agent = enrolled(client, key=key)
     operator = analyst(client)
     _stage_response_action("agent-1", "alert-1", action="ISOLATE_HOST")
     conn = db.connect()
@@ -28,7 +28,7 @@ def prepared(client):
         == 200
     )
     command = client.get("/api/v1/agents/agent-1/commands", headers=agent).json()["commands"][0]
-    value = artifact(command)
+    value = artifact(command) if data is None else artifact(command, data)
     manifest = {k: v for k, v in value.items() if k != "content_base64"}
     manifest.update(
         schema_version="2",

@@ -665,6 +665,64 @@ def _migration_28(conn: sqlite3.Connection) -> None:
             BEGIN SELECT RAISE(ABORT,'artifact attestation is immutable'); END""")
 
 
+def _migration_29(conn: sqlite3.Connection) -> None:
+    """Bounded resumable artifact sessions; reservations survive process restart."""
+    conn.execute("""CREATE TABLE response_artifact_transfers (
+        artifact_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, command_id TEXT NOT NULL,
+        host_id TEXT NOT NULL, manifest_json TEXT NOT NULL, manifest_sha256 TEXT NOT NULL,
+        content_bytes INTEGER NOT NULL CHECK(content_bytes BETWEEN 1 AND 1048576),
+        received_bytes INTEGER NOT NULL DEFAULT 0 CHECK(received_bytes BETWEEN 0 AND content_bytes),
+        state TEXT NOT NULL CHECK(state IN ('OPEN','COMPLETE','EXPIRED')),
+        admitted_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+        FOREIGN KEY(command_id) REFERENCES commands(command_id))""")
+    conn.execute(
+        "CREATE INDEX ix_artifact_transfer_expiry ON response_artifact_transfers(state,expires_at)"
+    )
+    conn.execute(
+        "CREATE INDEX ix_artifact_transfer_agent ON response_artifact_transfers(agent_id,state)"
+    )
+    conn.execute(
+        "CREATE INDEX ix_artifact_transfer_command ON response_artifact_transfers(command_id,state)"
+    )
+    conn.execute("""CREATE TABLE response_artifact_chunks (
+        artifact_id TEXT NOT NULL REFERENCES response_artifact_transfers(artifact_id),
+        offset INTEGER NOT NULL CHECK(offset BETWEEN 0 AND 1048575),
+        sha256 TEXT NOT NULL, content BLOB NOT NULL CHECK(length(content) BETWEEN 1 AND 65536),
+        PRIMARY KEY(artifact_id,offset))""")
+    conn.execute("""CREATE TRIGGER artifact_chunk_no_update
+        BEFORE UPDATE ON response_artifact_chunks
+        BEGIN SELECT RAISE(ABORT,'accepted artifact chunks cannot change'); END""")
+    conn.execute("""CREATE TRIGGER artifact_transfer_identity_immutable
+        BEFORE UPDATE ON response_artifact_transfers
+        WHEN NEW.artifact_id!=OLD.artifact_id OR NEW.agent_id!=OLD.agent_id
+        OR NEW.command_id!=OLD.command_id OR NEW.host_id!=OLD.host_id
+        OR NEW.manifest_json!=OLD.manifest_json OR NEW.manifest_sha256!=OLD.manifest_sha256
+        OR NEW.content_bytes!=OLD.content_bytes
+        BEGIN SELECT RAISE(ABORT,'artifact transfer identity cannot change'); END""")
+    conn.execute("""CREATE TABLE response_artifact_transfer_usage (
+        id INTEGER PRIMARY KEY CHECK(id=1),
+        reserved_bytes INTEGER NOT NULL CHECK(reserved_bytes>=0),
+        open_sessions INTEGER NOT NULL CHECK(open_sessions>=0), total_sessions INTEGER NOT NULL)""")
+    conn.execute("INSERT INTO response_artifact_transfer_usage VALUES (1,0,0,0)")
+    conn.execute("""CREATE TRIGGER artifact_transfer_usage_insert
+        AFTER INSERT ON response_artifact_transfers
+        BEGIN UPDATE response_artifact_transfer_usage SET
+            reserved_bytes=reserved_bytes
+                +CASE WHEN NEW.state='OPEN' THEN NEW.content_bytes ELSE 0 END,
+            open_sessions=open_sessions+CASE WHEN NEW.state='OPEN' THEN 1 ELSE 0 END,
+            total_sessions=total_sessions+1 WHERE id=1; END""")
+    conn.execute("""CREATE TRIGGER artifact_transfer_usage_state AFTER UPDATE OF state
+        ON response_artifact_transfers BEGIN UPDATE response_artifact_transfer_usage SET
+        reserved_bytes=reserved_bytes
+            -CASE WHEN OLD.state='OPEN' THEN OLD.content_bytes ELSE 0 END
+            +CASE WHEN NEW.state='OPEN' THEN NEW.content_bytes ELSE 0 END,
+        open_sessions=open_sessions-CASE WHEN OLD.state='OPEN' THEN 1 ELSE 0 END
+            +CASE WHEN NEW.state='OPEN' THEN 1 ELSE 0 END WHERE id=1; END""")
+    conn.execute("""CREATE TRIGGER artifact_transfer_no_delete
+        BEFORE DELETE ON response_artifact_transfers
+        BEGIN SELECT RAISE(ABORT,'artifact transfer history must be retained'); END""")
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -694,6 +752,7 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_26,
     _migration_27,
     _migration_28,
+    _migration_29,
 ]
 
 

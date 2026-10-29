@@ -233,9 +233,11 @@ def verify_manifest(conn, agent_id, manifest, *, admitted_at=None):
         or server_time(admitted_at) > server_time(key["retired_at"])
     ):
         raise HTTPException(403, "retired key cannot admit a new artifact transfer")
-    if not verify_signature(
-        key["public_key"], value.authorization.signature, artifact_signing_input(manifest)
-    ):
+    try:
+        signing_bytes = artifact_signing_input(manifest)
+    except ValueError as exc:
+        raise HTTPException(422, "artifact manifest has invalid UTF-8 signing fields") from exc
+    if not verify_signature(key["public_key"], value.authorization.signature, signing_bytes):
         raise HTTPException(422, "artifact manifest signature disagrees")
     return dict(key)
 

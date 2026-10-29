@@ -109,7 +109,7 @@ def custody_event(conn, artifact_id, event, actor, detail):
     )
 
 
-def retain(conn, agent_id, command_id, upload, content):
+def validate_binding(conn, agent_id, command_id, upload):
     row = conn.execute(
         "SELECT c.agent_id,c.command_json,c.delivered_at,e.host_id FROM commands c "
         "JOIN enrolled_agents e ON e.agent_id=c.agent_id AND e.revoked_at IS NULL "
@@ -130,8 +130,28 @@ def retain(conn, agent_id, command_id, upload, content):
         upload.kind == "execution_report" and command["action"] not in KINDS.values()
     ):
         raise HTTPException(422, "artifact kind does not belong to this collection action")
+    return command
+
+
+def storage_quota():
+    try:
+        quota = int(os.environ.get("PANOPTICON_ARTIFACT_STORAGE_BYTES", MAX_GLOBAL_BYTES))
+        if not 1 <= quota <= 16 * 1024**3:
+            raise ValueError()
+        return quota
+    except ValueError as exc:
+        raise HTTPException(503, "artifact storage quota is invalid") from exc
+
+
+def retain(conn, agent_id, command_id, upload, content):
+    validate_binding(conn, agent_id, command_id, upload)
     manifest = upload.model_dump(exclude={"content_base64"})
     manifest_digest = hashlib.sha256(canonical(manifest).encode()).hexdigest()
+    if conn.execute(
+        "SELECT 1 FROM response_artifact_transfers WHERE artifact_id=? AND state='OPEN'",
+        (upload.artifact_id,),
+    ).fetchone():
+        raise HTTPException(409, "finish the admitted artifact through its transfer session")
     prior = conn.execute(
         "SELECT manifest_digest,content FROM response_artifacts WHERE artifact_id=?",
         (upload.artifact_id,),
@@ -149,17 +169,19 @@ def retain(conn, agent_id, command_id, upload, content):
         "WHERE command_id=?",
         (command_id,),
     ).fetchone()
-    try:
-        quota = int(os.environ.get("PANOPTICON_ARTIFACT_STORAGE_BYTES", MAX_GLOBAL_BYTES))
-        if not 1 <= quota <= 16 * 1024**3:
-            raise ValueError()
-    except ValueError as exc:
-        raise HTTPException(503, "artifact storage quota is invalid") from exc
+    pending = conn.execute(
+        "SELECT reserved_bytes,open_sessions FROM response_artifact_transfer_usage WHERE id=1"
+    ).fetchone()
+    pending_local = conn.execute(
+        "SELECT COUNT(*) AS n,COALESCE(SUM(content_bytes),0) AS bytes "
+        "FROM response_artifact_transfers WHERE command_id=? AND state='OPEN'",
+        (command_id,),
+    ).fetchone()
     if (
-        local["n"] >= MAX_COMMAND_COUNT
-        or local["bytes"] + len(content) > MAX_COMMAND_BYTES
-        or totals["n"] >= MAX_GLOBAL_COUNT
-        or totals["bytes"] + len(content) > quota
+        local["n"] + pending_local["n"] >= MAX_COMMAND_COUNT
+        or local["bytes"] + pending_local["bytes"] + len(content) > MAX_COMMAND_BYTES
+        or totals["n"] + pending["open_sessions"] >= MAX_GLOBAL_COUNT
+        or totals["bytes"] + pending["reserved_bytes"] + len(content) > storage_quota()
     ):
         raise HTTPException(507, "artifact retention quota reached; existing evidence preserved")
     conn.execute(
@@ -198,7 +220,7 @@ def custody_rows(conn, artifact_id, *, after=0, limit=200):
     return [{**dict(row), "detail": json.loads(row["detail"])} for row in rows]
 
 
-def retain_signed(conn, agent_id, command_id, upload):
+def retain_signed(conn, agent_id, command_id, upload, *, admitted_at=None):
     from manager.artifact_keys import verify_manifest
 
     manifest = upload.manifest.model_dump()
@@ -216,7 +238,7 @@ def retain_signed(conn, agent_id, command_id, upload):
     ):
         raise HTTPException(409, "unsigned legacy evidence cannot be promoted to signed provenance")
     key = verify_manifest(
-        conn, agent_id, manifest, admitted_at=previous["verified_at"] if previous else None
+        conn, agent_id, manifest, admitted_at=previous["verified_at"] if previous else admitted_at
     )
     fields = {
         k: v
