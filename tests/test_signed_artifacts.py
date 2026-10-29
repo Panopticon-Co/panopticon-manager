@@ -78,7 +78,9 @@ def test_exact_signed_upload_retry_has_one_attestation_and_complete_custody(clie
     ]
 
 
-@pytest.mark.parametrize("change", ["signature", "bytes", "command", "public_key", "unsigned"])
+@pytest.mark.parametrize(
+    "change", ["signature", "bytes", "command", "public_key", "unsigned", "invalid_utf8"]
+)
 def test_manifest_mismatch_is_refused_audited_and_never_retained(client, change):
     _, agent, _, body, url = prepared(client)
     invalid = copy.deepcopy(body)
@@ -90,9 +92,15 @@ def test_manifest_mismatch_is_refused_audited_and_never_retained(client, change)
         invalid["manifest"]["command_id"] = "another-command"
     elif change == "public_key":
         invalid["public_key"] = "untrusted upload key"
+    elif change == "invalid_utf8":
+        invalid["manifest"]["correlation_id"] = "\ud800"
     else:
         del invalid["manifest"]["authorization"]
-    response = client.post(url, headers=agent, json=invalid)
+    response = client.post(
+        url,
+        headers={**agent, "Content-Type": "application/json"},
+        content=json.dumps(invalid, ensure_ascii=True).encode(),
+    )
     assert response.status_code == 422, response.text
     conn = db.connect()
     assert conn.execute("SELECT COUNT(*) FROM response_artifacts").fetchone()[0] == 0
