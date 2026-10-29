@@ -38,6 +38,7 @@ SOURCES = {
     "response_decision_audit": "event_id",
     "response_artifact_custody": "artifact_id,sequence",
 }
+OPTIONAL_SOURCES = {"response_security_audit": "event_id"}
 
 
 def canonical(value):
@@ -54,6 +55,49 @@ def event_hash(*values):
 
 def register(conn):
     conn.create_function("panopticon_audit_hash", len(FIELDS), event_hash, deterministic=True)
+    from manager.artifact_keys import public_key_id
+
+    conn.create_function("panopticon_public_key_id", 1, public_key_id, deterministic=True)
+
+
+def install_security_source(conn):
+    """Migration 28 extends the existing chain; it never creates a parallel audit path."""
+    columns = ("event_id", "request_id", "asset_id", "event", "actor", "detail", "occurred_at")
+    # SQL-generated json_object() detail can carry SQLite's transient JSON
+    # subtype. Concatenation preserves its TEXT bytes, rather than embedding a
+    # nested object that would disagree with the persisted source-row snapshot.
+    payload = (
+        "json_object("
+        + ",".join(
+            f"'{name}',NEW.{name} || ''" if name == "detail" else f"'{name}',NEW.{name}"
+            for name in columns
+        )
+        + ")"
+    )
+    values = (
+        "COALESCE((SELECT MAX(sequence) FROM response_audit_ledger),0)+1",
+        "COALESCE((SELECT event_hash FROM response_audit_ledger "
+        f"ORDER BY sequence DESC LIMIT 1),'{ZERO}')",
+        "'response_security_audit'",
+        "NEW.event_id",
+        "NEW.event",
+        "NEW.actor",
+        "NEW.request_id",
+        "NULL",
+        "NEW.asset_id",
+        "NEW.occurred_at",
+        payload,
+        "0",
+    )
+    args = ",".join(values)
+    conn.execute(f"""CREATE TRIGGER chain_response_security_audit
+        AFTER INSERT ON response_security_audit BEGIN
+        INSERT INTO response_audit_ledger ({",".join(FIELDS)},event_hash)
+        VALUES ({args},panopticon_audit_hash({args})); END""")
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""CREATE TRIGGER chain_no_{operation.lower()}_response_security_audit
+            BEFORE {operation} ON response_security_audit
+            BEGIN SELECT RAISE(ABORT,'response audit is immutable (append-only)'); END""")
 
 
 def _snapshot_sql(table, prefix):
@@ -265,7 +309,13 @@ def verify(conn, *, require_chained_history=False):
     only be detected against an independently retained signed checkpoint.
     """
     previous, sequence, legacy = ZERO, 0, 0
-    seen = {name: 0 for name in SOURCES}
+    sources = {**SOURCES}
+    for table, key in OPTIONAL_SOURCES.items():
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone():
+            sources[table] = key
+    seen = {name: 0 for name in sources}
     for raw in conn.execute("SELECT * FROM response_audit_ledger ORDER BY sequence"):
         row = dict(raw)
         sequence += 1
@@ -276,10 +326,10 @@ def verify(conn, *, require_chained_history=False):
         ):
             raise ValueError(f"response audit chain disagreement at sequence {sequence}")
         source = row["source"]
-        if source not in SOURCES:
+        if source not in sources:
             raise ValueError("unknown response audit source")
         payload = json.loads(row["payload_json"])
-        keys = SOURCES[source].split(",")
+        keys = sources[source].split(",")
         original = conn.execute(
             f"SELECT * FROM {source} WHERE " + " AND ".join(f"{key}=?" for key in keys),
             tuple(payload[key] for key in keys),

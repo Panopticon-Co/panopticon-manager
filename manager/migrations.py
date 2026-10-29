@@ -601,6 +601,70 @@ def _migration_27(conn: sqlite3.Connection) -> None:
     install(conn)
 
 
+def _migration_28(conn: sqlite3.Connection) -> None:
+    """Retain artifact signing key versions and audit every identity transition."""
+    from manager.audit_chain import install_security_source
+
+    conn.execute("""CREATE TABLE response_security_audit (
+        event_id TEXT PRIMARY KEY, request_id TEXT, asset_id TEXT, event TEXT NOT NULL,
+        actor TEXT NOT NULL, detail TEXT NOT NULL, occurred_at TEXT NOT NULL)""")
+    install_security_source(conn)
+    conn.execute("""CREATE TABLE artifact_signing_keys (
+        agent_id TEXT NOT NULL REFERENCES enrolled_agents(agent_id), host_id TEXT NOT NULL,
+        key_id TEXT NOT NULL, key_version INTEGER NOT NULL CHECK(key_version>0),
+        public_key TEXT NOT NULL, valid_from TEXT NOT NULL, retired_at TEXT,
+        compromised_at TEXT, compromise_reason TEXT,
+        PRIMARY KEY(agent_id,key_id), UNIQUE(agent_id,key_version))""")
+    conn.execute("""CREATE UNIQUE INDEX ix_active_artifact_key ON artifact_signing_keys(agent_id)
+        WHERE retired_at IS NULL AND compromised_at IS NULL""")
+    conn.execute("""INSERT INTO artifact_signing_keys
+        (agent_id,host_id,key_id,key_version,public_key,valid_from,retired_at)
+        SELECT agent_id,host_id,panopticon_public_key_id(public_key),1,
+            public_key,enrolled_at,revoked_at
+        FROM enrolled_agents WHERE public_key IS NOT NULL""")
+    conn.execute("""CREATE TRIGGER artifact_key_enrollment AFTER INSERT ON enrolled_agents
+        WHEN NEW.public_key IS NOT NULL BEGIN
+        INSERT INTO artifact_signing_keys
+        (agent_id,host_id,key_id,key_version,public_key,valid_from)
+        VALUES (NEW.agent_id,NEW.host_id,panopticon_public_key_id(NEW.public_key),1,
+            NEW.public_key,NEW.enrolled_at);
+        INSERT INTO response_security_audit VALUES
+        (lower(hex(randomblob(16))),NULL,NEW.host_id,'artifact_key_enrolled',
+            'agent:' || NEW.agent_id,json_object('agent_id',NEW.agent_id,
+                'key_id',panopticon_public_key_id(NEW.public_key),'key_version',1),NEW.enrolled_at);
+        END""")
+    conn.execute("""CREATE TRIGGER artifact_key_material_immutable
+        BEFORE UPDATE ON artifact_signing_keys
+        WHEN NEW.agent_id!=OLD.agent_id OR NEW.host_id!=OLD.host_id OR NEW.key_id!=OLD.key_id
+        OR NEW.key_version!=OLD.key_version OR NEW.public_key!=OLD.public_key
+        OR NEW.valid_from!=OLD.valid_from
+        OR (OLD.retired_at IS NOT NULL AND NEW.retired_at IS NOT OLD.retired_at)
+        OR (OLD.compromised_at IS NOT NULL AND
+            (NEW.compromised_at IS NOT OLD.compromised_at
+             OR NEW.compromise_reason IS NOT OLD.compromise_reason))
+        BEGIN SELECT RAISE(ABORT,'historical artifact key identity is immutable'); END""")
+    conn.execute("""CREATE TRIGGER artifact_key_no_delete BEFORE DELETE ON artifact_signing_keys
+        BEGIN SELECT RAISE(ABORT,'historical artifact keys must be retained'); END""")
+    conn.execute("""CREATE TABLE artifact_key_rotations (
+        agent_id TEXT NOT NULL REFERENCES enrolled_agents(agent_id), request_id TEXT NOT NULL,
+        old_key_id TEXT NOT NULL, new_key_id TEXT NOT NULL, new_public_key TEXT NOT NULL,
+        payload_digest TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('PENDING','APPROVED')),
+        created_at TEXT NOT NULL, expires_at TEXT NOT NULL, approved_by TEXT, approved_at TEXT,
+        PRIMARY KEY(agent_id,request_id))""")
+    conn.execute("""CREATE TABLE artifact_identity_operations (
+        actor TEXT NOT NULL, request_id TEXT NOT NULL, payload_digest TEXT NOT NULL,
+        result_json TEXT NOT NULL, PRIMARY KEY(actor,request_id))""")
+    conn.execute("""CREATE TABLE artifact_manifest_attestations (
+        artifact_id TEXT PRIMARY KEY REFERENCES response_artifacts(artifact_id),
+        agent_id TEXT NOT NULL, key_id TEXT NOT NULL, key_version INTEGER NOT NULL,
+        manifest_json TEXT NOT NULL, verified_at TEXT NOT NULL,
+        FOREIGN KEY(agent_id,key_id) REFERENCES artifact_signing_keys(agent_id,key_id))""")
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""CREATE TRIGGER artifact_attestation_no_{operation.lower()}
+            BEFORE {operation} ON artifact_manifest_attestations
+            BEGIN SELECT RAISE(ABORT,'artifact attestation is immutable'); END""")
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -629,6 +693,7 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_25,
     _migration_26,
     _migration_27,
+    _migration_28,
 ]
 
 

@@ -40,7 +40,7 @@ def test_legacy_snapshot_passes_integrity_but_is_refused_as_chained_provenance(
     seed_command(conn)
     _audit(conn, "cmd-1", "created", "legacy:operator")
     conn.commit()
-    assert migrations.migrate(conn) == 27
+    assert migrations.migrate(conn) == len(migrations._MIGRATIONS)
     row = conn.execute("SELECT * FROM response_audit_ledger").fetchone()
     assert row["legacy_import"] == 1
     result = audit_chain.verify(conn)
@@ -54,7 +54,7 @@ def test_legacy_snapshot_passes_integrity_but_is_refused_as_chained_provenance(
     result = audit_chain.verify(conn)
     assert result["chain_verified_count"] == 1
     assert result["legacy_import_count"] == 1
-    assert migrations.migrate(conn) == 27  # No second import or replay.
+    assert migrations.migrate(conn) == len(migrations._MIGRATIONS)  # No second import or replay.
     assert conn.execute("SELECT COUNT(*) FROM response_audit_ledger").fetchone()[0] == 2
 
 
@@ -72,7 +72,7 @@ def test_all_response_writers_chain_and_are_queryable_with_retry_idempotency(cli
     events = client.get(
         "/api/v1/response-audit", headers=analyst, params={"request_id": rid, "asset_id": "host-1"}
     ).json()["events"]
-    assert {e["source"] for e in events} == set(audit_chain.SOURCES)
+    assert {e["source"] for e in events} == set(audit_chain.SOURCES) | {"response_security_audit"}
     created = next(e for e in events if e["source"] == "command_audit" and e["event"] == "created")
     assert created["request_id"] == rid  # Creation precedes response command_id UPDATE.
     filtered = client.get(

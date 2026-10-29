@@ -9,6 +9,7 @@ from typing import Literal
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from response_engine.artifacts import ArtifactManifest
 
 from manager.timeutil import iso_now
 from manager.wire.linux_endpoint import strict_json
@@ -37,6 +38,12 @@ class ArtifactUpload(BaseModel):
     media_type: Literal["application/json"]
     content_bytes: StrictInt = Field(ge=1, le=MAX_CONTENT)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    content_base64: str = Field(min_length=4, max_length=1398104)
+
+
+class SignedArtifactUpload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    manifest: ArtifactManifest
     content_base64: str = Field(min_length=4, max_length=1398104)
 
 
@@ -191,6 +198,67 @@ def custody_rows(conn, artifact_id, *, after=0, limit=200):
     return [{**dict(row), "detail": json.loads(row["detail"])} for row in rows]
 
 
+def retain_signed(conn, agent_id, command_id, upload):
+    from manager.artifact_keys import verify_manifest
+
+    manifest = upload.manifest.model_dump()
+    previous = conn.execute(
+        "SELECT manifest_json,verified_at FROM artifact_manifest_attestations WHERE artifact_id=?",
+        (manifest["artifact_id"],),
+    ).fetchone()
+    if previous and previous["manifest_json"] != canonical(manifest):
+        raise HTTPException(409, "artifact identity already binds another signed manifest")
+    if (
+        previous is None
+        and conn.execute(
+            "SELECT 1 FROM response_artifacts WHERE artifact_id=?", (manifest["artifact_id"],)
+        ).fetchone()
+    ):
+        raise HTTPException(409, "unsigned legacy evidence cannot be promoted to signed provenance")
+    key = verify_manifest(
+        conn, agent_id, manifest, admitted_at=previous["verified_at"] if previous else None
+    )
+    fields = {
+        k: v
+        for k, v in manifest.items()
+        if k not in {"agent_id", "produced_at_unix", "authorization"}
+    }
+    value = ArtifactUpload.model_validate(
+        {**fields, "schema_version": "1", "content_base64": upload.content_base64}
+    )
+    content = decoded_content(value)
+    receipt = retain(conn, agent_id, command_id, value, content)
+    if previous:
+        return receipt
+    conn.execute(
+        "INSERT INTO artifact_manifest_attestations VALUES (?,?,?,?,?,?)",
+        (
+            manifest["artifact_id"],
+            agent_id,
+            key["key_id"],
+            key["key_version"],
+            canonical(manifest),
+            iso_now(),
+        ),
+    )
+    for event, actor, detail in (
+        (
+            "artifact_produced",
+            "agent:" + agent_id,
+            {"produced_at_unix": manifest["produced_at_unix"], "time_source": "endpoint_claim"},
+        ),
+        ("artifact_transferred", "system:artifact-store", {"content_bytes": len(content)}),
+        (
+            "artifact_signature_verified",
+            "system:artifact-verifier",
+            {"key_id": key["key_id"], "key_version": key["key_version"]},
+        ),
+        ("artifact_hash_verified", "system:artifact-verifier", {"sha256": manifest["sha256"]}),
+    ):
+        custody_event(conn, manifest["artifact_id"], event, actor, detail)
+    return receipt
+
+
 def manifests(conn, command_id, *, full_history=False):
     rows = conn.execute(
         "SELECT artifact_id,kind,media_type,content_bytes,sha256,received_at "
@@ -200,6 +268,9 @@ def manifests(conn, command_id, *, full_history=False):
     result = []
     for row in rows:
         item = dict(row)
+        from manager.artifact_keys import retained_status
+
+        item["signing"] = retained_status(conn, row["artifact_id"])
         head = conn.execute(
             "SELECT sequence,event_hash FROM response_artifact_custody WHERE artifact_id=? "
             "ORDER BY sequence DESC LIMIT 1",
