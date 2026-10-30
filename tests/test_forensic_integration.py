@@ -172,3 +172,25 @@ def test_failed_forensic_metadata_audit_cannot_commit_accepted_evidence(client):
                             (body["manifest"]["artifact_id"],)).fetchone()
     assert not conn.execute("SELECT 1 FROM artifact_manifest_attestations").fetchone()
     assert audit_chain.verify(conn)["complete_history_verified"]
+
+
+def test_existing_signed_collection_execution_reports_remain_accepted(client):
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from response_engine.artifacts import artifact_signing_input
+
+    from manager.command_signing import CommandSigner
+
+    private = ec.generate_private_key(ec.SECP256R1())
+    reader, agent, command, body, url = prepared(client, key=private)
+    body["manifest"]["kind"] = "execution_report"
+    body["manifest"]["authorization"] = CommandSigner(private).sign_bytes(
+        artifact_signing_input(body["manifest"]),
+    )
+    response = client.post(url, headers=agent, json=body)
+    assert response.status_code == 200, response.text
+    rid = db.connect().execute("SELECT response_id FROM response_actions WHERE command_id=?",
+                               (command["command_id"],)).fetchone()[0]
+    retained = exported(client, reader, rid)
+    assert retained["artifacts"][0]["kind"] == "execution_report"
+    assert not retained["forensic_context"]["evidence_references"]
+    assert audit_chain.verify(db.connect())["complete_history_verified"]

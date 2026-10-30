@@ -109,6 +109,11 @@ def validate_retained_manifest(conn, manifest, command_id):
     payload = json.loads(command["command_json"])
     if payload["action"] not in COLLECT_ACTIONS:
         return None  # Preserve the existing separate execution-report semantics.
+    kind = manifest.get("kind") if isinstance(manifest, dict) else manifest.kind
+    if kind == "execution_report":
+        # Existing signed admission verifies these reports and their command binding.
+        # They are not process/network/file snapshots understood by the pure planner.
+        return None
     try:
         return validate_evidence_metadata(manifest, expected=EvidenceExpectation(
             action=payload["action"], agent_id=command["agent_id"], host_id=payload["host_id"],
