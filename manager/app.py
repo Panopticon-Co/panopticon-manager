@@ -30,6 +30,7 @@ from manager.routers import (
     response_artifacts,
     response_audit,
     status,
+    triage,
 )
 
 
@@ -69,3 +70,4 @@ app.include_router(response_audit.router)
 app.include_router(alerts.router)
 app.include_router(incidents.router)
 app.include_router(status.router)
+app.include_router(triage.router)

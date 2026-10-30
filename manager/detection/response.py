@@ -208,10 +208,17 @@ def _on_alert_created(conn: sqlite3.Connection, alert: Any) -> None:
        ``system:response-engine``.
     """
     record = alert.to_dict() if hasattr(alert, "to_dict") else alert
+    from manager.auto_triage import start
+
+    triage_owned = start(conn, record)
     active_response = record.get("active_response")
     if not active_response:
         return
     eyedetect_action = active_response.get("action")
+    if triage_owned and eyedetect_action in {
+        "COLLECT_PROCESS_INFO", "COLLECT_NETWORK_CONNECTIONS", "COLLECT_FILE",
+    }:
+        return
     if not eyedetect_action:
         return
     alert_id = record["alert_id"]
@@ -348,7 +355,13 @@ def authorize_response_action(conn: sqlite3.Connection, response_id: str, actor:
         return
     command_id = f"resp-{response_id}"
     target = json.loads(row["target_json"])
-    if row["origin"] == "analyst":
+    if row["origin"] == "auto_triage":
+        from manager.auto_triage import guard
+
+        blocker = guard(conn, response_id=response_id)
+        if blocker:
+            raise HTTPException(409, blocker)
+    if row["origin"] in {"analyst", "auto_triage"}:
         from manager.analyst_response import resolve_manual_target
 
         agent_id, host_id, verified = resolve_manual_target(
@@ -395,12 +408,14 @@ def authorize_response_action(conn: sqlite3.Connection, response_id: str, actor:
                 {"reason": "canonical target or enrolled host changed"},
             )
             return
+    from manager.auto_triage import deadline
+
     command = Command(
         command_id=command_id,
         agent_id=str(alert["agent_id"]),
         schema_version="2" if "boot_id" in target else "1",
         action=row["action"],
-        expires_at=datetime.now(timezone.utc) + _DEFAULT_COMMAND_TTL,
+        expires_at=deadline(conn, response_id) or datetime.now(timezone.utc) + _DEFAULT_COMMAND_TTL,
         target=target,
     )
     authorize_and_enqueue(conn, command, actor, alert_id=row["alert_id"])

@@ -773,6 +773,13 @@ def _migration_31(conn: sqlite3.Connection) -> None:
             BEGIN SELECT RAISE(ABORT,'artifact view history is immutable'); END""")
 
 
+def _migration_32(conn: sqlite3.Connection) -> None:
+    """Versioned rule policy, authoritative asset classes and immutable reservations."""
+    from manager.triage_store import install
+
+    install(conn)
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -805,6 +812,7 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_29,
     _migration_30,
     _migration_31,
+    _migration_32,
 ]
 
 

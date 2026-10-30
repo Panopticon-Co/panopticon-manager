@@ -47,7 +47,7 @@ from manager.response_artifacts import manifests
 from manager.response_audit import record_decision
 from manager.response_profile import current_profile, policy_block
 from manager.response_readiness import channel_readiness, response_preflight
-from manager.routers.commands import _audit, _expire_stale_commands
+from manager.routers.commands import _expire_stale_commands
 from manager.timeutil import iso_now
 
 router = APIRouter()
@@ -520,22 +520,9 @@ async def cancel(
     conn.execute("BEGIN IMMEDIATE")
     try:
         _expire_stale_commands(conn, datetime.now(timezone.utc).isoformat())
-        row = conn.execute(
-            "SELECT c.command_id,c.lifecycle_state FROM response_actions ra JOIN commands c "
-            "ON c.command_id=ra.command_id WHERE ra.response_id=?",
-            (response_id,),
-        ).fetchone()
-        if row is None:
-            raise HTTPException(404, "response has no queued command")
-        if row["lifecycle_state"] != "CANCELLED":
-            if row["lifecycle_state"] != "AUTHORIZED":
-                raise HTTPException(409, "only commands awaiting dispatch can be cancelled")
-            conn.execute(
-                "UPDATE commands SET lifecycle_state='CANCELLED' WHERE command_id=?",
-                (row["command_id"],),
-            )
-            _audit(conn, row["command_id"], "cancelled", actor, request.reason)
-            record_decision(conn, response_id, "cancelled", actor, {"reason": request.reason})
+        from manager.auto_triage import cancel_queued
+
+        cancel_queued(conn, response_id, actor, request.reason)
         conn.commit()
     except Exception:
         conn.rollback()

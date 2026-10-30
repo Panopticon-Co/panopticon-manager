@@ -243,7 +243,16 @@ async def poll(
             else "delivered_at IS NULL AND lifecycle_state = 'AUTHORIZED'"
         )
         observed_profile = current_profile(conn, agent_id, enrolled["host_id"])
+        from manager.auto_triage import dispatchable, endpoint, reconcile
+
+        selected_runs = set()
+        reconcile(conn, agent_id)
         policy_sql, policy_args = delivery_predicate(observed_profile)
+        capability = endpoint(conn, agent_id, enrolled["host_id"])
+        if not (capability.recent and capability.collection_acceptance_gate
+                and capability.artifact_protocol):
+            policy_sql += (" AND NOT EXISTS (SELECT 1 FROM triage_items ti "
+                           "WHERE 'resp-' || ti.response_id=commands.command_id)")
         rows = conn.execute(
             "SELECT command_id, command_json FROM commands WHERE agent_id = ? "
             f"AND {eligibility} AND expires_at > ? AND ({policy_sql}) ORDER BY created_at LIMIT 32",
@@ -258,6 +267,7 @@ async def poll(
                 json.loads(row["command_json"])["target"],
             )
         ]
+        rows = [row for row in rows if dispatchable(conn, row["command_id"], selected_runs)]
         queued_commands = [json.loads(str(row["command_json"])) for row in rows]
         if command_auth == "ES256" and any("authorization" not in c for c in queued_commands):
             # Preserve the authenticated channel observation without claiming dispatch.
@@ -311,6 +321,13 @@ async def accept(
         ).fetchone()
         if command is None or str(command["agent_id"]) != agent_id:
             raise HTTPException(status_code=422, detail="command does not belong to agent")
+        from manager.auto_triage import guard
+
+        blocker = guard(conn, command_id=command_id)
+        if blocker:
+            _audit(conn, command_id, "collection_acceptance_refused", f"agent:{agent_id}", blocker)
+            conn.commit()
+            raise HTTPException(409, blocker)
         if json.loads(command["command_json"])["action"] in {
             "COLLECT_PROCESS_INFO", "COLLECT_NETWORK_CONNECTIONS", "COLLECT_FILE",
         } and command["lifecycle_state"] not in {"DISPATCHED", "ACCEPTED"}:

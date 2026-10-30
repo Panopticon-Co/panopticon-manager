@@ -213,9 +213,10 @@ def enroll_analyst(analyst_id: str, bootstrap_token: str, role: str = "analyst")
     identity space (analyst_credentials, not enrolled_agents) so an
     analyst's authorization actions in command_audit carry a real
     per-caller actor rather than the shared command-creation token."""
-    admin = role == "artifact_admin"
+    admin = role in {"artifact_admin", "triage_admin"}
     expected = os.environ.get(
-        "PANOPTICON_ARTIFACT_ADMIN_ENROLLMENT_TOKEN"
+        ("PANOPTICON_TRIAGE_ADMIN_ENROLLMENT_TOKEN" if role == "triage_admin"
+         else "PANOPTICON_ARTIFACT_ADMIN_ENROLLMENT_TOKEN")
         if admin
         else "PANOPTICON_ANALYST_ENROLLMENT_TOKEN"
     )
@@ -223,6 +224,12 @@ def enroll_analyst(analyst_id: str, bootstrap_token: str, role: str = "analyst")
         expected, os.environ.get("PANOPTICON_ANALYST_ENROLLMENT_TOKEN", "")
     ):
         raise HTTPException(503, "artifact administrator requires a distinct enrollment secret")
+    other_secret = os.environ.get(
+        "PANOPTICON_ARTIFACT_ADMIN_ENROLLMENT_TOKEN" if role == "triage_admin"
+        else "PANOPTICON_TRIAGE_ADMIN_ENROLLMENT_TOKEN", "",
+    )
+    if admin and expected and other_secret and hmac.compare_digest(expected, other_secret):
+        raise HTTPException(503, "administrator roles require separate enrollment secrets")
     if not expected or not hmac.compare_digest(bootstrap_token, expected):
         raise HTTPException(status_code=401, detail="invalid analyst enrollment credential")
     from response_engine.access import AnalystRole
@@ -236,7 +243,9 @@ def enroll_analyst(analyst_id: str, bootstrap_token: str, role: str = "analyst")
         previous = conn.execute(
             "SELECT role FROM analyst_credentials WHERE analyst_id=?", (analyst_id,)
         ).fetchone()
-        if previous is not None and previous["role"] == "artifact_admin" and not admin:
+        if previous is not None and previous["role"] in {"artifact_admin", "triage_admin"} and (
+            previous["role"] != role
+        ):
             raise HTTPException(403, "artifact administrator requires dedicated enrollment")
         conn.execute(
             "INSERT OR REPLACE INTO analyst_credentials "
@@ -254,7 +263,7 @@ def enroll_analyst(analyst_id: str, bootstrap_token: str, role: str = "analyst")
             {
                 "analyst_id": analyst_id,
                 "role": role,
-                "access_policy_version": 2,
+                "access_policy_version": 3,
                 "existing_scopes_apply": False,
             },
         )
