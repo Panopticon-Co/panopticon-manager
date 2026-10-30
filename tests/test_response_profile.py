@@ -222,7 +222,10 @@ def test_signed_artifact_capability_v2_is_current_explicit_and_preserves_legacy_
     assert parse_header(encoded(old)) == old
     assert "artifact_protocol" not in RuntimeProfile.model_validate(old).model_dump()
     value = profile(
-        platform=platform, schema_version="2", artifact_protocol="signed-json-v2-resume-v1"
+        platform=platform,
+        schema_version="2",
+        artifact_protocol="signed-json-v2-resume-v1",
+        require_collection_acceptance=True,
     )
     assert poll(client, agent, value).status_code == 200
     state = readiness(client, analyst)["runtime_profile"]
@@ -248,6 +251,10 @@ def test_signed_artifact_capability_v2_is_current_explicit_and_preserves_legacy_
         {"schema_version": "2"},
         {"schema_version": "2", "artifact_protocol": "unsigned-files"},
         {"schema_version": "2", "artifact_protocol": True},
+        {"schema_version": "1", "require_collection_acceptance": True},
+        {"schema_version": "2", "artifact_protocol": "signed-json-v2-resume-v1"},
+        {"schema_version": "2", "artifact_protocol": None, "require_collection_acceptance": None},
+        {"schema_version": "2", "artifact_protocol": None, "require_collection_acceptance": 1},
     ],
 )
 def test_profile_version_cannot_invent_or_ambiguously_claim_artifact_delivery(changes):

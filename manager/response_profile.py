@@ -26,19 +26,24 @@ class RuntimeProfile(BaseModel):
     require_boot_binding: StrictBool
     require_signature: StrictBool
     artifact_protocol: Literal["signed-json-v2-resume-v1"] | None = None
+    require_collection_acceptance: StrictBool | None = None
 
     @model_serializer(mode="wrap")
     def versioned_shape(self, handler):
         result = handler(self)
         if self.schema_version == "1":
             result.pop("artifact_protocol", None)
+            result.pop("require_collection_acceptance", None)
         return result
 
     @model_validator(mode="after")
     def coherent_policy(self):
-        if self.schema_version == "1" and "artifact_protocol" in self.model_fields_set:
+        new_fields = {"artifact_protocol", "require_collection_acceptance"}
+        if self.schema_version == "1" and new_fields & self.model_fields_set:
             raise ValueError("legacy profile cannot claim artifact delivery capability")
-        if self.schema_version == "2" and "artifact_protocol" not in self.model_fields_set:
+        if self.schema_version == "2" and (
+            not new_fields <= self.model_fields_set or self.require_collection_acceptance is None
+        ):
             raise ValueError("profile version 2 must explicitly report artifact protocol")
         for values in (self.implemented_actions, self.allowed_actions):
             if len(values) != len(set(values)):
