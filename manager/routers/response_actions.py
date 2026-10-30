@@ -22,6 +22,11 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from response_engine.access import AnalystRole
+from response_engine.automation import (
+    DEFAULT_POLICIES,
+    VERIFIED_PREFIX,
+    derive_response_status,
+)
 from response_engine.catalog import action_catalog
 from response_engine.contract import Action
 from response_engine.policy import MAX_CAMPAIGN_ACTIONS
@@ -41,6 +46,7 @@ from manager.detection.response import (
     expire_stale_response_actions,
     find_open_duplicate,
     reject_response_action,
+    response_mode,
 )
 from manager.linux_response_evidence import command_evidence
 from manager.response_artifacts import manifests
@@ -194,6 +200,7 @@ def _with_command_audit(
             for r in (decision_rows if full_history else decision_rows[:100])
         ]
         record["evidence_truncated"] = not full_history and len(decision_rows) > 100
+        record["policy_decision"] = policy_decision(conn, row["response_id"])
         if row["command_id"] is not None:
             if row["command_lifecycle_state"] in {"AUTHORIZED", "DISPATCHED"}:
                 profile = current_profile(conn, row["agent_id"], row["host_id"])
@@ -234,8 +241,75 @@ def _with_command_audit(
                 )
                 record["audit"] = record["audit"][:100]
                 record["receipts"] = record["receipts"][:20]
+        record["execution"] = execution_summary(record)
+        record["response_status"] = record_response_status([record])
         out.append(record)
     return out
+
+
+def policy_decision(conn: sqlite3.Connection, response_id: str) -> dict | None:
+    """The automated-response policy decision that staged this action, or
+    None (analyst-requested actions and pre-policy rows have none)."""
+    row = conn.execute(
+        "SELECT policy_id, mode, global_mode, reasons_json, simulation_status, simulation_json, "
+        "created_at FROM response_policy_decisions WHERE response_id = ?",
+        (response_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "policy_id": row["policy_id"],
+        "mode": row["mode"],
+        "global_mode": row["global_mode"],
+        "reasons": json.loads(row["reasons_json"]),
+        "simulation_status": row["simulation_status"],
+        "simulation": json.loads(row["simulation_json"]) if row["simulation_json"] else None,
+        "decided_at": row["created_at"],
+    }
+
+
+def record_response_status(records: list[dict], incident_status: str | None = None) -> str:
+    """derive_response_status over serialized response-action records."""
+    return derive_response_status(
+        [
+            {
+                "action": r["action"],
+                "lifecycle_state": r["lifecycle_state"],
+                "command_lifecycle_state": r["command_lifecycle_state"],
+                "result_detail": r["results"][-1]["detail"] if r["results"] else None,
+                "simulation_status": (r["policy_decision"] or {}).get("simulation_status"),
+            }
+            for r in records
+        ],
+        incident_status,
+    )
+
+
+def execution_summary(record: dict) -> dict:
+    """How this action was (or was not) carried out, kept distinct from the
+    analyst's decision: ``simulated`` never touched a host, ``endpoint`` means
+    an agent reported an outcome, and ``verified`` is true only when that
+    agent reported independently observing the effect."""
+    decision = record.get("policy_decision") or {}
+    result = record["results"][-1] if record.get("results") else None
+    if result is not None:
+        detail = result.get("detail") or ""
+        return {
+            "kind": "endpoint",
+            "outcome": result["outcome"],
+            "verified": result["outcome"] == "succeeded" and detail.startswith(VERIFIED_PREFIX),
+            "detail": detail,
+        }
+    if record.get("command_lifecycle_state") is not None:
+        return {"kind": "endpoint", "outcome": None, "verified": False, "detail": None}
+    if decision.get("simulation_status") == "simulated":
+        return {
+            "kind": "simulated",
+            "outcome": None,
+            "verified": False,
+            "detail": (decision.get("simulation") or {}).get("would"),
+        }
+    return {"kind": "none", "outcome": None, "verified": False, "detail": None}
 
 
 def expire_pending(conn: sqlite3.Connection) -> None:
@@ -321,6 +395,16 @@ async def list_response_actions(
     return {
         "response_actions": _with_command_audit(conn, rows[:limit], analyst_id=analyst_id),
         "next_offset": offset + limit if len(rows) > limit else None,
+    }
+
+
+@router.get("/api/v1/response-policies")
+async def response_policies(authorization: str | None = Header(default=None)) -> dict:
+    """The active automated-response policy set and global execution mode."""
+    require_analyst_token(authorization)
+    return {
+        "response_mode": response_mode(),
+        "policies": [policy.model_dump(mode="json") for policy in DEFAULT_POLICIES],
     }
 
 

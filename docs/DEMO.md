@@ -1,6 +1,86 @@
 # Panopticon Manager — Capstone Demo Runbook
 
-## Capstone demo (current)
+## Automated response demo (2026-10-30)
+
+Design and contract: `vendor/response_engine/docs/AUTOMATED_RESPONSE.md`.
+
+The demo runs this pipeline:
+
+1. A real lab process is observed and reported as telemetry.
+2. Detection rule DET-LNX-001 fires.
+3. The alert is persisted.
+4. Policy `contain-reverse-shell` makes its decision; the simulation adapter
+   previews the kill, and the action is staged for approval.
+5. An analyst approves.
+6. The lab endpoint terminates the process and verifies that it is gone.
+7. The response is marked `contained`.
+
+```bash
+# terminal A: manager. enforce = real containment possible (after approval)
+export PANOPTICON_ENROLLMENT_TOKEN=demo-enroll PANOPTICON_ANALYST_ENROLLMENT_TOKEN=demo-analyst
+PANOPTICON_RESPONSE_MODE=enforce PANOPTICON_DB_PATH=demo.db \
+  PANOPTICON_ALERTS_PATH=demo-alerts.ndjson uvicorn manager.app:app --port 8000
+
+# terminal B: lab endpoint (Linux): enrolls, launches its own payload, reports it, serves commands
+export PANOPTICON_ENROLLMENT_TOKEN=demo-enroll PANOPTICON_ANALYST_ENROLLMENT_TOKEN=demo-analyst
+python tools/lab_responder.py demo --url http://127.0.0.1:8000 --enroll-analyst lab-analyst
+# prints: payload pid N ... and export ANALYST=...
+
+# terminal C: Console (sibling repo) shows policy mode, simulation preview, Approve
+PANOPTICON_MANAGER_TOKEN=$ANALYST python app.py --manager-url http://127.0.0.1:8000
+```
+
+**Before approval:**
+
+- The response row reads *Approval required*. It shows a *Simulated* preview
+  "terminate process pid=N (start_time_ticks=T) on host LAB-RESPONDER-01" and
+  the status `awaiting_approval`.
+- `ps -p N` shows the payload still running.
+
+**Approve** in the Console, or with curl:
+
+```bash
+B=http://127.0.0.1:8000; A="Authorization: Bearer $ANALYST"
+RID=$(curl -s -H "$A" "$B/api/v1/response-actions?host_id=LAB-RESPONDER-01&state=PENDING" \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["response_actions"][0]["response_id"])')
+curl -s -X POST -H "$A" $B/api/v1/response-actions/$RID/authorize
+```
+
+**After approval:**
+
+- Within about 2 s, terminal B prints `succeeded - verified: pid N ... terminated by SIGTERM`
+  and exits.
+- `ps -p N` no longer finds the process.
+- The action shows `command_lifecycle_state=SUCCEEDED`,
+  `execution={"kind":"endpoint","verified":true,...}` and
+  `response_status=contained`. The incident on LAB-RESPONDER-01 also reads
+  `response_status=contained`.
+
+**Variations:**
+
+- **Default mode.** Without `PANOPTICON_RESPONSE_MODE=enforce`, the same run
+  shows `simulated_containment`. The row is REJECTED "simulated only …", no
+  command is ever created, and the payload is untouched.
+- **Cleanup.** The responder kills its payload on exit, Ctrl-C or
+  `--duration` timeout. To check nothing is left:
+  `pgrep -af panopticon-lab-payload` should print nothing.
+
+**Safety notes:**
+
+- The payload only *prints* `/dev/tcp/198.51.100.7/4444` (a TEST-NET-2
+  address). It opens no socket.
+- The lab endpoint refuses every pid it did not launch, any start-ticks
+  mismatch, and every action other than KILL_PROCESS and the two read-only
+  collections.
+- It is a Linux lab emulator, not officer-agent.exe.
+
+The automated test for this flow is `pytest -v tests/test_automated_response.py`.
+
+Note that the corpus demo below kills processes only under
+`PANOPTICON_RESPONSE_MODE=enforce`. Without it, every KILL_PROCESS
+recommendation is previewed (`simulated_containment`), not staged.
+
+## Capstone demo (corpus incidents)
 
 Verified 2026-10-25 on branch `claude/blissful-lamport-qk32ab`,
 `vendor/eyedetect` at `696dfb0` (engine main, merged PR #16). Everything below the next heading is the

@@ -773,6 +773,36 @@ def _migration_31(conn: sqlite3.Connection) -> None:
             BEGIN SELECT RAISE(ABORT,'artifact view history is immutable'); END""")
 
 
+def _migration_32(conn: sqlite3.Connection) -> None:
+    """Immutable automated-response policy decisions, one per alert, with the
+    simulation adapter's outcome (docs/AUTOMATED_RESPONSE.md)."""
+    conn.execute("""CREATE TABLE response_policy_decisions (
+        decision_id TEXT PRIMARY KEY,
+        alert_id TEXT NOT NULL UNIQUE REFERENCES alerts(alert_id),
+        response_id TEXT REFERENCES response_actions(response_id),
+        policy_id TEXT NOT NULL, action TEXT,
+        mode TEXT NOT NULL
+            CHECK(mode IN ('record','simulate','approval','auto','denied')),
+        global_mode TEXT NOT NULL CHECK(global_mode IN ('simulate','enforce')),
+        reasons_json TEXT NOT NULL,
+        simulation_status TEXT NOT NULL
+            CHECK(simulation_status IN ('not_run','simulated','refused')),
+        simulation_json TEXT,
+        host_id TEXT, target_json TEXT,
+        created_at TEXT NOT NULL)""")
+    conn.execute(
+        "CREATE INDEX ix_policy_decisions_host ON response_policy_decisions "
+        "(host_id, action, created_at)"
+    )
+    conn.execute(
+        "CREATE INDEX ix_policy_decisions_response ON response_policy_decisions (response_id)"
+    )
+    for operation in ("UPDATE", "DELETE"):
+        conn.execute(f"""CREATE TRIGGER policy_decision_no_{operation.lower()}
+            BEFORE {operation} ON response_policy_decisions
+            BEGIN SELECT RAISE(ABORT,'policy decisions are immutable'); END""")
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -805,6 +835,7 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_29,
     _migration_30,
     _migration_31,
+    _migration_32,
 ]
 
 

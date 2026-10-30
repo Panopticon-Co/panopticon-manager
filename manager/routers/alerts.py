@@ -19,7 +19,7 @@ from fastapi import APIRouter, Header, HTTPException, Query
 
 from manager import db
 from manager.auth import require_analyst_token
-from manager.routers.response_actions import response_actions_for_alerts
+from manager.routers.response_actions import record_response_status, response_actions_for_alerts
 
 router = APIRouter()
 
@@ -111,7 +111,9 @@ async def get_alert(alert_id: str, authorization: str | None = Header(default=No
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="no alert with that id")
+    actions = response_actions_for_alerts(conn, [alert_id], analyst_id=analyst_id)
     return {
         "alert": alert_row_to_dict(row),
-        "response_actions": response_actions_for_alerts(conn, [alert_id], analyst_id=analyst_id),
+        "response_actions": actions,
+        "response_status": record_response_status(actions),
     }

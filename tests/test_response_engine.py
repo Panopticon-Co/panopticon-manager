@@ -19,7 +19,9 @@ class _Alert:
     a to_dict() is accepted by on_alert_created."""
 
     def __init__(self, **fields):
-        self._fields = fields
+        # The automated-response policy denies alerts missing these identity
+        # fields (fail closed); every real engine Alert carries them.
+        self._fields = {"rule_id": "rule-1", "host_id": "host-1", "level": 10, **fields}
 
     def to_dict(self) -> dict:
         return self._fields

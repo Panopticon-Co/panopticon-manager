@@ -271,7 +271,8 @@ def test_vertical_slice_auto_safe_collection_dispatches_without_analyst_action(
 
     class _Alert:
         def to_dict(self) -> dict:
-            return {"alert_id": "ALT-auto-1", "active_response": {"action": "FAKE_RECOMMENDATION"}}
+            return {"alert_id": "ALT-auto-1", "rule_id": "rule-1", "host_id": "host-1", "level": 10,
+                    "active_response": {"action": "FAKE_RECOMMENDATION"}}
 
     response_module.on_alert_created(conn, _Alert())
     conn.commit()

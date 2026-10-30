@@ -10,6 +10,14 @@ from fastapi.testclient import TestClient
 FIXTURE_RULES_DIR = Path(__file__).resolve().parent / "fixtures" / "rules"
 
 
+@pytest.fixture(autouse=True)
+def _enforce_response_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The suites below predate PANOPTICON_RESPONSE_MODE and assert enforce-mode
+    staging (policy containment PENDING for approval). The simulate default is
+    covered explicitly in tests/test_automated_response.py."""
+    monkeypatch.setenv("PANOPTICON_RESPONSE_MODE", "enforce")
+
+
 @pytest.fixture()
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("PANOPTICON_DB_PATH", str(tmp_path / "panopticon.db"))

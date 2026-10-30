@@ -20,16 +20,19 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
 from fastapi import HTTPException
+from response_engine.automation import DEFAULT_POLICIES, PolicyDecision, evaluate_policy
 from response_engine.policy import classify_tier
 from response_engine.recommendation import translate_recommendation
 
 from manager.response_audit import record_decision
+from manager.response_simulation import simulate
 from manager.routers.commands import Command, authorize_and_enqueue
 from manager.timeutil import iso_now
 
@@ -40,6 +43,7 @@ __all__ = [
     "find_open_duplicate",
     "on_alert_created",
     "reject_response_action",
+    "response_mode",
     "translate_recommendation",
 ]
 
@@ -79,6 +83,85 @@ def expire_stale_response_actions(conn: sqlite3.Connection) -> None:
             ("no analyst decision within the authorization window", row["response_id"]),
         )
         record_decision(conn, row["response_id"], "expired", "system:expiry-sweep")
+
+
+def response_mode() -> str:
+    """PANOPTICON_RESPONSE_MODE: ``simulate`` (default) previews every
+    policy-selected containment without staging it; ``enforce`` stages it for
+    analyst approval. Anything else fails closed to ``simulate``."""
+    value = os.environ.get("PANOPTICON_RESPONSE_MODE", "simulate").strip().lower()
+    return value if value in ("simulate", "enforce") else "simulate"
+
+
+def _recent_equivalent(
+    conn: sqlite3.Connection, host_id: str | None, action: str, target: dict, seconds: int
+) -> str | None:
+    """A decision for the same host/action/target inside the policy cooldown
+    that was simulated or whose command succeeded -- repeat alerts on the
+    same process must not re-run (or re-preview) the same response."""
+    if host_id is None or seconds <= 0:
+        return None
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
+    rows = conn.execute(
+        "SELECT d.response_id, d.target_json FROM response_policy_decisions d "
+        "LEFT JOIN response_actions ra ON ra.response_id = d.response_id "
+        "LEFT JOIN commands c ON c.command_id = ra.command_id "
+        "WHERE d.host_id = ? AND d.action = ? AND d.created_at > ? AND "
+        "(d.simulation_status = 'simulated' AND d.mode = 'simulate' "
+        " OR c.lifecycle_state = 'SUCCEEDED') ORDER BY d.created_at",
+        (host_id, action, cutoff),
+    ).fetchall()
+    for row in rows:
+        if row["target_json"] and json.loads(row["target_json"]) == target:
+            return row["response_id"]
+    return None
+
+
+def _record_policy_decision(
+    conn: sqlite3.Connection,
+    *,
+    alert_id: str,
+    response_id: str | None,
+    decision: PolicyDecision,
+    host_id: str | None,
+    target: dict | None,
+    simulation: tuple[str, dict] | None,
+) -> None:
+    status, detail = simulation or ("not_run", None)
+    conn.execute(
+        "INSERT INTO response_policy_decisions (decision_id, alert_id, response_id, policy_id, "
+        "action, mode, global_mode, reasons_json, simulation_status, simulation_json, host_id, "
+        "target_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            str(uuid4()),
+            alert_id,
+            response_id,
+            decision.policy_id,
+            decision.action,
+            decision.mode,
+            decision.global_mode,
+            json.dumps(list(decision.reasons)),
+            status,
+            json.dumps(detail, sort_keys=True) if detail is not None else None,
+            host_id,
+            json.dumps(target) if target is not None else None,
+            iso_now(),
+        ),
+    )
+    if response_id is not None:
+        record_decision(
+            conn,
+            response_id,
+            "policy_evaluated",
+            "system:response-engine",
+            {
+                "policy_id": decision.policy_id,
+                "mode": decision.mode,
+                "global_mode": decision.global_mode,
+                "reasons": list(decision.reasons),
+                "simulation_status": status,
+            },
+        )
 
 
 def on_alert_created(conn: sqlite3.Connection, alert: Any) -> None:
@@ -287,16 +370,61 @@ def _on_alert_created(conn: sqlite3.Connection, alert: Any) -> None:
         )
         return
 
+    # Automated-response policy (docs/AUTOMATED_RESPONSE.md): decides the
+    # execution mode for the already-translated action. It never changes the
+    # action or the target, and cannot make a non-AUTO_SAFE action auto-fire.
+    decision = evaluate_policy(
+        record, command_action, policies=DEFAULT_POLICIES, global_mode=response_mode()
+    )
+    agent_row = conn.execute(
+        "SELECT agent_id FROM alerts WHERE alert_id = ?", (alert_id,)
+    ).fetchone()
+    agent_id = agent_row["agent_id"] if agent_row is not None else None
+    cooled = _recent_equivalent(
+        conn, host_id, command_action, command_target, decision.cooldown_seconds
+    )
+    simulation = None
+    if decision.mode == "denied" or decision.mode == "record" or cooled is not None:
+        if cooled is not None:
+            reason = f"cooldown: equivalent response {cooled} within {decision.cooldown_seconds}s"
+        else:
+            label = "policy denied" if decision.mode == "denied" else "record only"
+            reason = f"{label} ({decision.policy_id}): " + "; ".join(decision.reasons)
+        state, reason = "REJECTED", reason
+    elif decision.mode == "simulate":
+        simulation = simulate(command_action, command_target, agent_id=agent_id, host_id=host_id)
+        state = "REJECTED"
+        reason = (
+            f"simulated only ({decision.policy_id}, response mode {decision.global_mode}): "
+            + simulation[1].get("would", simulation[1].get("error", ""))
+        )
+    else:
+        if decision.simulate:
+            simulation = simulate(
+                command_action, command_target, agent_id=agent_id, host_id=host_id
+            )
+        state, reason = "PENDING", decided_reason
     response_id = _insert_response_action(
         conn,
         alert_id=alert_id,
         action=command_action,
         tier=tier,
-        state="PENDING",
+        state=state,
         target=command_target,
-        reason=decided_reason,
+        reason=reason,
     )
-    if tier == "AUTO_SAFE":
+    _record_policy_decision(
+        conn,
+        alert_id=alert_id,
+        response_id=response_id,
+        decision=decision,
+        host_id=host_id,
+        target=command_target,
+        simulation=simulation,
+    )
+    if state != "PENDING":
+        return
+    if tier == "AUTO_SAFE" and decision.auto_execute:
         try:
             authorize_response_action(conn, response_id, actor="system:response-engine")
         except HTTPException as exc:

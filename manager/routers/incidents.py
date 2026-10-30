@@ -13,6 +13,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
+from response_engine.automation import derive_response_status
 
 from manager import db
 from manager.auth import require_analyst_permission, require_analyst_token
@@ -43,6 +44,23 @@ def _summary(row) -> dict:
     record = {key: row[key] for key in row.keys() if key != "tactics_json"}
     record["tactics"] = json.loads(row["tactics_json"])
     return record
+
+
+def incident_response_status(conn, incident_id: str, incident_status: str | None) -> str:
+    """One incident-level response status (response_engine.automation
+    derive_response_status) over every response action of its alerts."""
+    rows = conn.execute(
+        "SELECT ra.action, ra.lifecycle_state, c.lifecycle_state AS command_lifecycle_state, "
+        "(SELECT r.detail FROM command_results r WHERE r.command_id = ra.command_id "
+        " ORDER BY r.received_at DESC LIMIT 1) AS result_detail, "
+        "d.simulation_status "
+        "FROM incident_alerts ia JOIN response_actions ra ON ra.alert_id = ia.alert_id "
+        "LEFT JOIN commands c ON c.command_id = ra.command_id "
+        "LEFT JOIN response_policy_decisions d ON d.response_id = ra.response_id "
+        "WHERE ia.incident_id = ?",
+        (incident_id,),
+    ).fetchall()
+    return derive_response_status([dict(r) for r in rows], incident_status)
 
 
 def _load_summary(conn, incident_id: str):
@@ -77,7 +95,15 @@ async def list_incidents(
         )
         .fetchall()
     )
-    return {"incidents": [_summary(row) for row in rows]}
+    conn = db.connect()
+    incidents = []
+    for row in rows:
+        record = _summary(row)
+        record["response_status"] = incident_response_status(
+            conn, record["incident_id"], record["status"]
+        )
+        incidents.append(record)
+    return {"incidents": incidents}
 
 
 @router.get("/api/v1/incidents/{incident_id}")
@@ -112,6 +138,7 @@ async def get_incident(incident_id: str, authorization: str | None = Header(defa
             (incident_id,),
         ).fetchall()
     ]
+    incident["response_status"] = incident_response_status(conn, incident_id, incident["status"])
     return {
         "incident": incident,
         "alerts": alerts,
@@ -142,4 +169,5 @@ async def update_status(
     row = _load_summary(conn, incident_id)
     incident = _summary(row)
     incident.pop("incident_json", None)
+    incident["response_status"] = incident_response_status(conn, incident_id, incident["status"])
     return {"incident": incident}

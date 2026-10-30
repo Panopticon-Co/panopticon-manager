@@ -752,7 +752,10 @@ def test_safe_collection_auto_dispatches_without_analyst_action_and_succeeds(
 
     class _Alert:
         def to_dict(self) -> dict:
-            return {"alert_id": "ALT-COLLECT", "active_response": {"action": "SOMETHING"}}
+            return {
+                "alert_id": "ALT-COLLECT", "rule_id": "rule-1", "host_id": "host-1", "level": 10,
+                "active_response": {"action": "SOMETHING"},
+            }
 
     response.on_alert_created(conn, _Alert())
     conn.commit()
