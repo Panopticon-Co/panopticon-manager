@@ -42,7 +42,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Panopticon-Co/panopticon-console
-          ref: "63c38b79e84af6917a06591103cc8f0a1aa36f5c"
+          ref: "1f67d5a4ddab04b32998fab4e1aed9bb7c7c97c2"
           path: _response-console-checkout
 
       - name: Move Console to sibling path (separate repository lint policy)
