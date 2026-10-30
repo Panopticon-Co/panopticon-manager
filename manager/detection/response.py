@@ -112,8 +112,10 @@ def on_alert_created(conn: sqlite3.Connection, alert: Any) -> None:
 # detection_source values whose disruptive recommendations are never staged
 # for approval (CONTRACT.md §6, class 3). Behavioral detectors -- beaconing,
 # rarity -- are evidence, not a verdict: an analyst may still act on them, but
-# by hand, never by approving a command the detector itself proposed.
-_RECORD_ONLY_SOURCES = frozenset({"behavioral"})
+# by hand, never by approving a command the detector itself proposed. The
+# engine's optional ML stage ("ml") emits no recommendation at all; listing it
+# keeps that true even if one ever appeared (engine docs/adr/002).
+_RECORD_ONLY_SOURCES = frozenset({"behavioral", "ml"})
 
 # Actions that need a PID-reuse guard. Without target_start_time_ticks the
 # translation fails closed; the reason says so instead of "no mapping".

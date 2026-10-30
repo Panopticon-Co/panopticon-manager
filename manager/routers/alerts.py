@@ -64,7 +64,7 @@ async def list_alerts(
     host_id: str | None = Query(default=None, max_length=256),
     severity: Literal["low", "medium", "high", "critical"] | None = None,
     rule_id: str | None = Query(default=None, max_length=128),
-    source: Literal["rule", "stateful", "behavioral", "correlation"] | None = None,
+    source: Literal["rule", "stateful", "behavioral", "correlation", "ml"] | None = None,
     incident_id: str | None = Query(default=None, max_length=128),
     before: str | None = Query(default=None, max_length=512),
     limit: int = Query(default=MAX_LIMIT, ge=1, le=MAX_LIMIT),

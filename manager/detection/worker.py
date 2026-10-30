@@ -67,6 +67,8 @@ class DetectionWorker:
         self._last_revert = float("-inf")
         self.fatal_error: str | None = None
         self.loop_errors = 0
+        # The engine's DetectionContext, once built; read for its ml_* stats.
+        self._context = None
         self.last_heartbeat: float | None = None
 
     # -- lifecycle -----------------------------------------------------
@@ -103,7 +105,24 @@ class DetectionWorker:
             "fatal_error": self.fatal_error,
             "heartbeat_age_seconds": None if age is None else round(age, 3),
             "loop_errors": self.loop_errors,
+            "ml": self.ml_status(),
         }
+
+    def ml_status(self) -> dict | None:
+        """The optional ML stage's state and counters (engine ``ml_*`` stats).
+
+        ``None`` when no model is configured; ``{"ml_state": "disabled", ...}``
+        when one was configured but failed to load (rules still run).
+        """
+        context = self._context
+        if context is None:
+            return None
+        try:
+            stats = context.stats()
+        except Exception:  # liveness reporting must never raise
+            return None
+        ml = {k: v for k, v in stats.items() if k.startswith("ml_")}
+        return ml or None
 
     def _beat(self) -> None:
         self.last_heartbeat = time.monotonic()
@@ -115,6 +134,7 @@ class DetectionWorker:
             run, sink, writer, context = build_detection_run(
                 conn, alerts_path=self._alerts_path, rules_dir=self._rules_dir
             )
+            self._context = context
         except Exception as exc:
             # Without this the thread used to exit with no log line while
             # ingest stayed green: events piled up and no alert ever fired.

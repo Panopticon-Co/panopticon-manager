@@ -103,7 +103,7 @@ def test_alert_filters_and_cursor(client: TestClient) -> None:
 
 def test_alert_inputs_are_validated(client: TestClient) -> None:
     h = _h(_enroll_analyst(client, "alice"))
-    for query in ("severity=extreme", "source=ml", "limit=0", "limit=201", "before=garbage"):
+    for query in ("severity=extreme", "source=bogus", "limit=0", "limit=201", "before=garbage"):
         assert client.get(f"/api/v1/alerts?{query}", headers=h).status_code == 422, query
     assert client.get("/api/v1/alerts/ALT-NOPE", headers=h).status_code == 404
 

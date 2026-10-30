@@ -65,6 +65,27 @@ def readyz(request: Request, response: Response) -> dict:
     return {"status": "ready", "schema_version": version}
 
 
+def _ml_metrics(ml: dict | None) -> str:
+    """Prometheus lines for the engine's optional ML stage (absent: no model configured)."""
+    if not ml:
+        return ""
+    enabled = int(ml.get("ml_state") == "enabled")
+    labels = (f'{{mode="{ml.get("ml_mode", "")}",version="{ml.get("ml_model_version", "")}"}}'
+              if enabled else "")
+    body = (
+        "\n# HELP panopticon_ml_enabled 1 when the ML stage loaded its model (0: configured but disabled).\n"
+        "# TYPE panopticon_ml_enabled gauge\n"
+        f"panopticon_ml_enabled{labels} {enabled}\n"
+    )
+    for key in ("ml_scored", "ml_skipped_no_command_line", "ml_errors", "ml_alerts"):
+        if key in ml:
+            body += f"# TYPE panopticon_{key} counter\npanopticon_{key} {ml[key]}\n"
+    for key in ("ml_latency_mean_ms", "ml_latency_max_ms"):
+        if ml.get(key) is not None:
+            body += f"# TYPE panopticon_{key} gauge\npanopticon_{key} {ml[key]}\n"
+    return body
+
+
 @router.get("/metrics")
 def metrics_endpoint(request: Request) -> Response:
     body = metrics.render_prometheus()
@@ -75,6 +96,7 @@ def metrics_endpoint(request: Request) -> Response:
             "# TYPE panopticon_detection_worker_up gauge\n"
             f"panopticon_detection_worker_up {int(worker['alive'])}\n"
         )
+        body += _ml_metrics(worker.get("ml"))
     try:
         conn = db.connect()
         pending = conn.execute(
