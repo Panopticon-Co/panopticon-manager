@@ -28,7 +28,7 @@ from response_engine.policy import MAX_CAMPAIGN_ACTIONS
 
 from manager import command_signing, db
 from manager.analyst_response import resolve_manual_target
-from manager.artifact_access import can_read_command
+from manager.artifact_access import can_read, can_read_command
 from manager.auth import (
     analyst_access,
     enroll_analyst,
@@ -174,6 +174,11 @@ def _with_command_audit(
         record["expires_at"] = row["expires_at"]
         record["command"] = json.loads(row["command_json"]) if row["command_json"] else None
         artifact_access = can_read_command(conn, analyst_id, row["command_id"])
+        if row["command_id"] is None:
+            artifact_access = can_read(conn, analyst_id, row["host_id"], row["alert_id"])
+        from manager.forensic_context import case_context
+
+        record["forensic_context"] = case_context(conn, row) if artifact_access else None
         record["artifacts"] = (
             manifests(conn, row["command_id"], full_history=full_history) if artifact_access else []
         )

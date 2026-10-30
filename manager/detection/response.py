@@ -146,6 +146,9 @@ def _insert_response_action(
     record_decision(
         conn, response_id, "staged", actor, {"state": state, "action": action, "reason": reason}
     )
+    from manager.forensic_context import capture_plan
+
+    capture_plan(conn, response_id, actor)
     return response_id
 
 

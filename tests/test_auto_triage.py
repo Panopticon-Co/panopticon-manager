@@ -161,6 +161,32 @@ def test_disabled_rule_cannot_fall_through_legacy_auto_safe_path(client, monkeyp
     assert not db.connect().execute("SELECT 1 FROM commands").fetchone()
 
 
+@pytest.mark.parametrize("platform,path", [
+    ("windows", r"C:\Lab\sample.txt"), ("linux", "/tmp/sample.txt"),
+])
+def test_file_automation_requires_exact_platform_path_and_preserves_metadata_semantics(
+    client, monkeypatch, platform, path,
+):
+    configuration = default_policy("RULE-1").model_dump()
+    for entry in configuration["entries"]:
+        if entry["action"] == "COLLECT_FILE" and entry["asset_class"] == "standard":
+            entry.update(decision="auto_dispatch",
+                         file_paths=[{"platform": platform, "path": path}])
+    prepare(client, monkeypatch, report=profile(platform=platform),
+            entries=configuration["entries"])
+    items = emit(alert(detection_source="rule", evidence={"file": {"path": path}}))
+    file = next(i for i in items if i["action"] == "COLLECT_FILE")
+    assert file["decision"] == "auto_dispatch"
+    command = json.loads(db.connect().execute(
+        "SELECT command_json FROM commands WHERE command_id=?", ("resp-" + file["response_id"],),
+    ).fetchone()[0])
+    assert command["action"] == "COLLECT_FILE" and command["target"] == {"path": path}
+    assert "acquire_bytes" not in command
+    changed = emit(alert("alert-2", evidence={"file": {"path": path + ".different"}}))
+    assert next(i for i in changed if i["action"] == "COLLECT_FILE")[
+        "reason"] == "alert_file_target_not_allowlisted"
+
+
 @pytest.mark.parametrize("stage", ["dispatch", "acceptance", "approval"])
 @pytest.mark.parametrize("change", ["policy", "asset", "boot", "key"])
 def test_live_policy_class_boot_and_key_are_rechecked(client, monkeypatch, stage, change):

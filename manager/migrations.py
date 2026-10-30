@@ -780,6 +780,13 @@ def _migration_32(conn: sqlite3.Connection) -> None:
     install(conn)
 
 
+def _migration_33(conn: sqlite3.Connection) -> None:
+    """Immutable advisory forensic plans; evidence remains in the existing artifact store."""
+    from manager.forensic_context import install
+
+    install(conn)
+
+
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_1,
     _migration_2,
@@ -813,6 +820,7 @@ _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _migration_30,
     _migration_31,
     _migration_32,
+    _migration_33,
 ]
 
 
