@@ -32,7 +32,7 @@ URL = "/api/v1/agents/lab-linux/commands/lab-command/accept"
 def test_acceptance_is_authenticated_idempotent_and_precedes_result(client):
     headers = prepare(client)
     assert client.post(URL).status_code == 401
-    assert client.post(URL, headers=headers).status_code == 200
+    assert client.post(URL, headers=headers).status_code == 409
     assert client.get("/api/v1/agents/lab-linux/commands", headers=headers).status_code == 200
     for _ in range(2):
         response = client.post(URL, headers=headers)
@@ -50,17 +50,19 @@ def test_acceptance_is_authenticated_idempotent_and_precedes_result(client):
         headers=headers,
     )
     assert result.status_code == 200
-    assert client.post(URL, headers=headers).status_code == 200
+    assert client.post(URL, headers=headers).status_code == 409
     assert conn.execute("SELECT lifecycle_state FROM commands").fetchone()[0] == "SUCCEEDED"
 
 
-@pytest.mark.parametrize("state", ["AUTHORIZED", "SUCCEEDED", "FAILED", "REJECTED"])
+@pytest.mark.parametrize("state", [
+    "AUTHORIZED", "SUCCEEDED", "FAILED", "REJECTED", "CANCELLED", "EXPIRED",
+])
 def test_acceptance_cannot_skip_dispatch_or_resurrect_terminal_state(client, state):
     headers = prepare(client)
     conn = db.connect()
     conn.execute("UPDATE commands SET lifecycle_state = ?", (state,))
     conn.commit()
-    assert client.post(URL, headers=headers).status_code == 200
+    assert client.post(URL, headers=headers).status_code == 409
     assert conn.execute("SELECT lifecycle_state FROM commands").fetchone()[0] == state
     assert conn.execute(
         "SELECT COUNT(*) FROM command_audit WHERE event = 'accepted'"
@@ -83,5 +85,8 @@ def test_acceptance_rejects_foreign_missing_and_expired_commands(client):
         ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),),
     )
     conn.commit()
-    assert client.post(URL, headers=headers).status_code == 200
+    assert client.post(URL, headers=headers).status_code == 409
     assert conn.execute("SELECT lifecycle_state FROM commands").fetchone()[0] == "EXPIRED"
+    assert conn.execute(
+        "SELECT COUNT(*) FROM command_audit WHERE event='collection_acceptance_refused'"
+    ).fetchone()[0] == 1

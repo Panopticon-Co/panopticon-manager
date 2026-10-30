@@ -288,7 +288,8 @@ async def accept(
     agent_id: str, command_id: str, authorization: str | None = Header(default=None)
 ) -> dict:
     """DISPATCHED -> ACCEPTED: the endpoint has received and validated the
-    command and is about to execute it, but has not yet finished. This is
+    command and is about to execute it, but has not yet finished. Collection
+    ACKs are execution permission and require a live dispatched command. This is
     optional acknowledgement, not a second incompatible protocol -- an agent
     that never calls this (e.g. one that only implements the original
     poll/result exchange) can still submit a result directly from
@@ -302,13 +303,21 @@ async def accept(
     now = datetime.now(timezone.utc).isoformat()
     conn.execute("BEGIN IMMEDIATE")
     try:
+        require_agent_token(agent_id, authorization)
         _expire_stale_commands(conn, now)
         command = conn.execute(
-            "SELECT agent_id, lifecycle_state FROM commands WHERE command_id = ?",
+            "SELECT agent_id, lifecycle_state, command_json FROM commands WHERE command_id = ?",
             (command_id,),
         ).fetchone()
         if command is None or str(command["agent_id"]) != agent_id:
             raise HTTPException(status_code=422, detail="command does not belong to agent")
+        if json.loads(command["command_json"])["action"] in {
+            "COLLECT_PROCESS_INFO", "COLLECT_NETWORK_CONNECTIONS", "COLLECT_FILE",
+        } and command["lifecycle_state"] not in {"DISPATCHED", "ACCEPTED"}:
+            _audit(conn, command_id, "collection_acceptance_refused", f"agent:{agent_id}",
+                   str(command["lifecycle_state"]))
+            conn.commit()
+            raise HTTPException(409, "collection command is not authorized for execution")
         if command["lifecycle_state"] == "DISPATCHED":
             conn.execute(
                 "UPDATE commands SET lifecycle_state = 'ACCEPTED' WHERE command_id = ?",

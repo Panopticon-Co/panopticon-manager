@@ -390,7 +390,7 @@ def test_late_accept_after_terminal_result_does_not_revert_state(client: TestCli
     late_accept = client.post(
         "/api/v1/agents/agent-1/commands/cmd-late-accept/accept", headers=headers
     )
-    assert late_accept.status_code == 200
+    assert late_accept.status_code == 409
     import manager.db as db_module
 
     row = db_module.connect().execute(
