@@ -250,6 +250,9 @@ def retain_signed(conn, agent_id, command_id, upload, *, admitted_at=None):
     )
     content = decoded_content(value)
     receipt = retain(conn, agent_id, command_id, value, content)
+    from manager.forensic_context import validate_retained_manifest
+
+    forensic = validate_retained_manifest(conn, upload.manifest, command_id)
     if previous:
         return receipt
     conn.execute(
@@ -282,6 +285,15 @@ def retain_signed(conn, agent_id, command_id, upload, *, admitted_at=None):
         ("artifact_hash_verified", "system:artifact-verifier", {"sha256": manifest["sha256"]}),
     ):
         custody_event(conn, manifest["artifact_id"], event, actor, detail)
+    if forensic:
+        from manager.artifact_keys import record
+
+        response = conn.execute("SELECT response_id FROM response_actions WHERE command_id=?",
+                                (command_id,)).fetchone()
+        record(conn, "forensic_metadata_validated", "system:artifact-verifier", manifest["host_id"],
+               response[0] if response else None,
+               {"artifact_id": manifest["artifact_id"], "command_id": command_id,
+                "schema_version": "1", "sha256": manifest["sha256"]})
     return receipt
 
 

@@ -95,6 +95,7 @@ def test_individual_browser_scope_signed_frames_and_view_reach_real_manager(clie
         status, _, shared_queue = request("/api/response-actions")
         assert status == 200
         assert all(not row["artifacts"] for row in shared_queue["response_actions"])
+        assert all(row.get("forensic_context") is None for row in shared_queue["response_actions"])
         upstream_calls.clear()
         token = operator["Authorization"].removeprefix("Bearer ")
         status, headers, signed_in = request("/api/evidence/session", body={"access_token": token})
@@ -112,6 +113,9 @@ def test_individual_browser_scope_signed_frames_and_view_reach_real_manager(clie
         rid = context["trusted"]["response_id"]
         status, _, case = request("/api/evidence/cases/" + rid, **browser)
         assert status == 200 and len(case["response_action"]["artifacts"]) == 1
+        reference = case["response_action"]["forensic_context"]["evidence_references"][0]
+        assert reference["manifest"] == upload["manifest"]
+        assert reference["content_requires_verified_retrieval"]
         status, _, chunk = request(
             artifact + "/chunks?offset=0&manifest_sha256=" + context["manifest_sha256"], **browser
         )

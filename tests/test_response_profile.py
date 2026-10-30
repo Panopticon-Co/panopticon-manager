@@ -213,6 +213,56 @@ def test_schema_and_runtime_validation_agree_on_closed_fields():
     assert not jsonschema.Draft202012Validator(schema).is_valid(bad)
 
 
+@pytest.mark.parametrize("platform", ["windows", "linux"])
+def test_signed_artifact_capability_v2_is_current_explicit_and_preserves_legacy_shape(
+    client, platform
+):
+    analyst, agent = setup(client)
+    old = profile(platform=platform)
+    assert parse_header(encoded(old)) == old
+    assert "artifact_protocol" not in RuntimeProfile.model_validate(old).model_dump()
+    value = profile(
+        platform=platform,
+        schema_version="2",
+        artifact_protocol="signed-json-v2-resume-v1",
+        require_collection_acceptance=True,
+    )
+    assert poll(client, agent, value).status_code == 200
+    state = readiness(client, analyst)["runtime_profile"]
+    assert (
+        state["state"] == "recent"
+        and state["report"]["artifact_protocol"] == value["artifact_protocol"]
+    )
+    central = Path(__file__).resolve().parents[2] / "panopticon-contracts"
+    schema = json.loads((central / "schema/response-profile-v2.schema.json").read_text())
+    jsonschema.validate(state["report"], schema)
+    assert RuntimeProfile.model_validate(value).model_dump() == value
+    unsupported = {**value, "artifact_protocol": None}
+    assert parse_header(encoded(unsupported))["artifact_protocol"] is None
+    assert poll(client, agent, old).status_code == 200
+    assert "artifact_protocol" not in readiness(client, analyst)["runtime_profile"]["report"]
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"schema_version": "1", "artifact_protocol": None},
+        {"schema_version": "1", "artifact_protocol": "signed-json-v2-resume-v1"},
+        {"schema_version": "2"},
+        {"schema_version": "2", "artifact_protocol": "unsigned-files"},
+        {"schema_version": "2", "artifact_protocol": True},
+        {"schema_version": "1", "require_collection_acceptance": True},
+        {"schema_version": "2", "artifact_protocol": "signed-json-v2-resume-v1"},
+        {"schema_version": "2", "artifact_protocol": None, "require_collection_acceptance": None},
+        {"schema_version": "2", "artifact_protocol": None, "require_collection_acceptance": 1},
+    ],
+)
+def test_profile_version_cannot_invent_or_ambiguously_claim_artifact_delivery(changes):
+    with pytest.raises(HTTPException) as error:
+        parse_header(encoded(profile(**changes)))
+    assert error.value.status_code == 422
+
+
 def test_blocked_queue_prefix_cannot_starve_permitted_collection(client):
     from manager.routers.commands import Command, authorize_and_enqueue
 

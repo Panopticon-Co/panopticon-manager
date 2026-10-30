@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_serializer, model_validator
 from response_engine.contract import Action
 
 from manager.wire.linux_endpoint import strict_json
@@ -16,7 +16,7 @@ CHANGING = {"KILL_PROCESS", "QUARANTINE_FILE", "ISOLATE_HOST", "RELEASE_HOST_ISO
 
 class RuntimeProfile(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    schema_version: Literal["1"]
+    schema_version: Literal["1", "2"]
     platform: Literal["linux", "windows"]
     host_id: str = Field(min_length=1, max_length=256)
     boot_id: str | None = Field(pattern=r"^boot_[0-9a-f]{64}$")
@@ -25,9 +25,26 @@ class RuntimeProfile(BaseModel):
     allowed_actions: list[Action] = Field(max_length=7)
     require_boot_binding: StrictBool
     require_signature: StrictBool
+    artifact_protocol: Literal["signed-json-v2-resume-v1"] | None = None
+    require_collection_acceptance: StrictBool | None = None
+
+    @model_serializer(mode="wrap")
+    def versioned_shape(self, handler):
+        result = handler(self)
+        if self.schema_version == "1":
+            result.pop("artifact_protocol", None)
+            result.pop("require_collection_acceptance", None)
+        return result
 
     @model_validator(mode="after")
     def coherent_policy(self):
+        new_fields = {"artifact_protocol", "require_collection_acceptance"}
+        if self.schema_version == "1" and new_fields & self.model_fields_set:
+            raise ValueError("legacy profile cannot claim artifact delivery capability")
+        if self.schema_version == "2" and (
+            not new_fields <= self.model_fields_set or self.require_collection_acceptance is None
+        ):
+            raise ValueError("profile version 2 must explicitly report artifact protocol")
         for values in (self.implemented_actions, self.allowed_actions):
             if len(values) != len(set(values)):
                 raise ValueError("duplicate response action")
@@ -46,7 +63,7 @@ def parse_header(value):
     try:
         return RuntimeProfile.model_validate(
             strict_json(base64.b64decode(value, validate=True).decode("utf-8"))
-        ).model_dump(mode="json")
+        ).model_dump(mode="json", exclude_unset=True)
     except (ValueError, RecursionError) as exc:
         raise HTTPException(422, "invalid response runtime profile") from exc
 
