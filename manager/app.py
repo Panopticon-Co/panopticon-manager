@@ -25,6 +25,7 @@ from manager.routers import (
     health,
     incidents,
     ingest,
+    inventory,
     linux_endpoint,
     response_actions,
     response_artifacts,
@@ -69,3 +70,4 @@ app.include_router(response_audit.router)
 app.include_router(alerts.router)
 app.include_router(incidents.router)
 app.include_router(status.router)
+app.include_router(inventory.router)
